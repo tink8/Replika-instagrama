@@ -25,3 +25,9 @@ Thumbs.db
 # Build folderi (ako budete koristili TypeScript ili React)
 dist/
 build/
+
+
+# Mediji i upload-ovani fajlovi (lokalni testovi)
+post-service/uploads/
+interactions-service/uploads/
+**/uploads/
