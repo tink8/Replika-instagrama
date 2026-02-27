@@ -1,0 +1,14 @@
+# Ne kopiraj node_modules sa mog kompjutera u kontejner
+# Kontejner će sam uraditi 'npm install' unutra
+node_modules/
+**/node_modules/
+
+# Ne kopiraj Git istoriju
+.git
+.gitignore
+
+# Ne kopiraj lokalne lozinke
+.env
+
+# Ne kopiraj uputstva
+README.md
