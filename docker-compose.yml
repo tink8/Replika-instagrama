@@ -1,0 +1,191 @@
+version: "3.9"
+
+services:
+  # MySQL Database
+  mysql:
+    image: mysql:8.0
+    container_name: instagram-mysql
+    environment:
+      MYSQL_ROOT_PASSWORD: ${DB_ROOT_PASSWORD:-root}
+      MYSQL_DATABASE: ${DB_NAME:-instagram_db}
+    ports:
+      - "3306:3306"
+    volumes:
+      - mysql_data:/var/lib/mysql
+    networks:
+      - instagram-network
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "localhost"]
+      timeout: 20s
+      retries: 10
+
+  # API Gateway (Entry point)
+  api-gateway:
+    image: ${DOCKER_REGISTRY:-tink8}/api-gateway:${IMAGE_TAG:-latest}
+    container_name: api-gateway
+    ports:
+      - "3000:3000"
+    environment:
+      NODE_ENV: production
+      PORT: 3000
+    depends_on:
+      - auth-service
+      - user-service
+      - post-service
+      - interaction-service
+      - social-service
+      - feed-service
+    networks:
+      - instagram-network
+    restart: unless-stopped
+
+  # Auth Service
+  auth-service:
+    image: ${DOCKER_REGISTRY:-tink8}/auth-service:${IMAGE_TAG:-latest}
+    container_name: auth-service
+    ports:
+      - "8000:8000"
+    environment:
+      NODE_ENV: production
+      PORT: 8000
+      DB_HOST: mysql
+      DB_USER: ${DB_USER:-root}
+      DB_PASSWORD: ${DB_ROOT_PASSWORD:-root}
+      DB_NAME: ${DB_NAME:-instagram_db}
+      JWT_SECRET: ${JWT_SECRET:-your-secret-key-change-in-production}
+    depends_on:
+      mysql:
+        condition: service_healthy
+    networks:
+      - instagram-network
+    restart: unless-stopped
+
+  # User Service
+  user-service:
+    image: ${DOCKER_REGISTRY:-tink8}/user-service:${IMAGE_TAG:-latest}
+    container_name: user-service
+    ports:
+      - "8001:8001"
+    environment:
+      NODE_ENV: production
+      PORT: 8001
+      DB_HOST: mysql
+      DB_USER: ${DB_USER:-root}
+      DB_PASSWORD: ${DB_ROOT_PASSWORD:-root}
+      DB_NAME: ${DB_NAME:-instagram_db}
+    depends_on:
+      mysql:
+        condition: service_healthy
+    networks:
+      - instagram-network
+    restart: unless-stopped
+
+  # Post Service
+  post-service:
+    image: ${DOCKER_REGISTRY:-tink8}/post-service:${IMAGE_TAG:-latest}
+    container_name: post-service
+    ports:
+      - "8003:8003"
+    environment:
+      NODE_ENV: production
+      PORT: 8003
+      DB_HOST: mysql
+      DB_USER: ${DB_USER:-root}
+      DB_PASSWORD: ${DB_ROOT_PASSWORD:-root}
+      DB_NAME: ${DB_NAME:-instagram_db}
+    volumes:
+      - uploads:/app/uploads
+    depends_on:
+      mysql:
+        condition: service_healthy
+    networks:
+      - instagram-network
+    restart: unless-stopped
+
+  # Interaction Service
+  interaction-service:
+    image: ${DOCKER_REGISTRY:-tink8}/interaction-service:${IMAGE_TAG:-latest}
+    container_name: interaction-service
+    ports:
+      - "8002:8002"
+    environment:
+      NODE_ENV: production
+      PORT: 8002
+      DB_HOST: mysql
+      DB_USER: ${DB_USER:-root}
+      DB_PASSWORD: ${DB_ROOT_PASSWORD:-root}
+      DB_NAME: ${DB_NAME:-instagram_db}
+    depends_on:
+      mysql:
+        condition: service_healthy
+    networks:
+      - instagram-network
+    restart: unless-stopped
+
+  # Social Service
+  social-service:
+    image: ${DOCKER_REGISTRY:-tink8}/social-service:${IMAGE_TAG:-latest}
+    container_name: social-service
+    ports:
+      - "8004:8004"
+    environment:
+      NODE_ENV: production
+      PORT: 8004
+      DB_HOST: mysql
+      DB_USER: ${DB_USER:-root}
+      DB_PASSWORD: ${DB_ROOT_PASSWORD:-root}
+      DB_NAME: ${DB_NAME:-instagram_db}
+    depends_on:
+      mysql:
+        condition: service_healthy
+    networks:
+      - instagram-network
+    restart: unless-stopped
+
+  # Feed Service
+  feed-service:
+    image: ${DOCKER_REGISTRY:-tink8}/feed-service:${IMAGE_TAG:-latest}
+    container_name: feed-service
+    ports:
+      - "8005:8005"
+    environment:
+      NODE_ENV: production
+      PORT: 8005
+      DB_HOST: mysql
+      DB_USER: ${DB_USER:-root}
+      DB_PASSWORD: ${DB_ROOT_PASSWORD:-root}
+      DB_NAME: ${DB_NAME:-instagram_db}
+    depends_on:
+      mysql:
+        condition: service_healthy
+    networks:
+      - instagram-network
+    restart: unless-stopped
+
+  # Frontend
+  frontend:
+    image: ${DOCKER_REGISTRY:-tink8}/frontend:${IMAGE_TAG:-latest}
+    container_name: frontend
+    ports:
+      - "3001:3001"
+    environment:
+      NODE_ENV: production
+      PORT: 3001
+      REACT_APP_API_BASE_URL: http://api-gateway:3000
+    depends_on:
+      - api-gateway
+    networks:
+      - instagram-network
+    restart: unless-stopped
+
+# Networks
+networks:
+  instagram-network:
+    driver: bridge
+
+# Volumes
+volumes:
+  mysql_data:
+    driver: local
+  uploads:
+    driver: local
