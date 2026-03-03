@@ -43,9 +43,11 @@ jobs:
 
       - name: Run tests for ${{ matrix.service }}
         run: |
-          if [ -d "${{ matrix.service }}" ]; then
+          if [ -f "${{ matrix.service }}/package.json" ]; then
             cd ${{ matrix.service }}
             npm test
+          else
+            echo "Skipping ${{ matrix.service }} - no package.json found"
           fi
 
   build-and-push:
