@@ -36,9 +36,11 @@ jobs:
 
       - name: Install dependencies for ${{ matrix.service }}
         run: |
-          if [ -d "${{ matrix.service }}" ]; then
+          if [ -d "${{ matrix.service }}" ] && [ -f "${{ matrix.service }}/package.json" ]; then
             cd ${{ matrix.service }}
             npm install
+          else
+            echo "Skipping ${{ matrix.service }} - service not yet initialized"
           fi
 
       - name: Run tests for ${{ matrix.service }}
