@@ -1,0 +1,7 @@
+node_modules/
+.env
+coverage/
+tests/
+.DS_Store
+npm-debug.log
+README.md
