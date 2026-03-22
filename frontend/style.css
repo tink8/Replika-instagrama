@@ -1,0 +1,100 @@
+body { 
+    margin: 0; 
+    font-family: 'Segoe UI', Arial, sans-serif; 
+    display: flex; 
+    justify-content: center; 
+    align-items: center; 
+    height: 100vh; 
+    background: linear-gradient(135deg, #feda75, #fa7e1e, #d62976, #962fbf, #4f5bd5); 
+    background-size: 300% 300%; 
+    animation: gradientMove 8s ease infinite; 
+}
+
+@keyframes gradientMove { 
+    0% { background-position: 0% 50%;} 
+    50% { background-position: 100% 50%; } 
+    100% { background-position: 0% 50%; } 
+}
+
+.container { 
+    text-align: center; 
+    width: 400px;
+}
+
+.box { 
+    background: white; 
+    width: 100%;
+    padding: 40px; 
+    border-radius: 8px;
+    border: 1px solid #dbdbdb; 
+    box-sizing: border-box;
+}        
+
+.logo {
+    font-size: 45px;
+    font-weight: bold;
+    margin-bottom: 25px;
+    background: linear-gradient(45deg, #feda75, #fa7e1e, #d62976, #962fbf, #4f5bd5);
+    
+    -webkit-background-clip: text;
+    background-clip: text; 
+    
+    -webkit-text-fill-color: transparent;
+    color: transparent; 
+}
+
+input { 
+    width: 100%; 
+    padding: 10px; 
+    margin-bottom: 8px; 
+    border: 1px solid #dbdbdb; 
+    background: #fafafa; 
+    border-radius: 3px; 
+    box-sizing: border-box; 
+    font-size: 12px;
+}
+
+button { 
+    width: 100%; 
+    padding: 8px; 
+    background: #0095f6; 
+    color: white; 
+    border: none; 
+    font-weight: bold; 
+    border-radius: 8px; 
+    cursor: pointer; 
+    margin-top: 10px; 
+}
+
+button:hover {
+    background-color: #1877f2;
+}
+
+.switch-box { 
+    background: white; 
+    width: 100%;
+    padding: 20px; 
+    border: 1px solid #dbdbdb; 
+    margin-top: 10px; 
+    border-radius: 8px; 
+    box-sizing: border-box; 
+    font-size: 14px;
+}
+
+.switch-box span { 
+    color: #0095f6; 
+    cursor: pointer; 
+    font-weight: bold; 
+}
+
+.hidden { 
+    display: none;
+}
+
+.info { 
+    color: #8e8e8e; 
+    font-weight: bold; 
+    margin-bottom: 15px; 
+    font-size: 14px; 
+    line-height: 1.4;
+}
