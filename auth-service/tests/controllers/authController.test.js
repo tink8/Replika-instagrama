@@ -21,7 +21,8 @@ await jest.unstable_mockModule('../../utils/jwtUtils.js', () => ({
     verifyToken: jest.fn(),
 }));
 
-const { register, login, refreshToken, logout } = await import('../../controllers/authController.js');
+const authControllerImport = await import('../../controllers/authController.js');
+const { register, login, refreshToken, logout } = authControllerImport.default || authControllerImport;
 const userModel = await import('../../models/userModel.js');
 const hashUtils = await import('../../utils/hashUtils.js');
 const jwtUtils = await import('../../utils/jwtUtils.js');
