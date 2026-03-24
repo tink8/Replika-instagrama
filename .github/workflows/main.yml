@@ -7,83 +7,77 @@ on:
     branches: [main]
 
 jobs:
-  test:
-    name: Run Unit Tests
+  ci-cd:
+    name: CI/CD (${{ matrix.service }})
     runs-on: ubuntu-latest
+
     strategy:
+      fail-fast: false
       matrix:
         service:
-          [
-            "api-gateway",
-            "auth-service",
-            "user-service",
-            "social-service",
-            "post-service",
-            "interaction-service",
-            "feed-service",
-            "frontend",
-          ]
+          - api-gateway
+          - auth-service
+          - user-service
+          - social-service
+          - post-service
+          - interaction-service
+          - feed-service
+          - frontend
 
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
 
+      - name: Check if package.json exists
+        id: check_package
+        run: |
+          if [ -f "${{ matrix.service }}/package.json" ]; then
+            echo "exists=true" >> $GITHUB_OUTPUT
+          else
+            echo "exists=false" >> $GITHUB_OUTPUT
+          fi
+
       - name: Setup Node.js
+        if: steps.check_package.outputs.exists == 'true'
         uses: actions/setup-node@v4
         with:
           node-version: "20"
 
-      # Only runs if package.json exists in the folder
-      - name: Install Dependencies & Run Tests
-        if: hashFiles(format('{0}/package.json', matrix.service)) != ''
+      - name: Check if test script exists
+        id: check_test_script
+        if: steps.check_package.outputs.exists == 'true'
+        run: |
+          node -e "const pkg=require('./${{ matrix.service }}/package.json'); process.exit(pkg.scripts && pkg.scripts.test ? 0 : 1)" \
+            && echo "exists=true" >> $GITHUB_OUTPUT \
+            || echo "exists=false" >> $GITHUB_OUTPUT
+
+      - name: Install dependencies
+        if: steps.check_package.outputs.exists == 'true'
         run: |
           cd ${{ matrix.service }}
           npm install
+
+      - name: Run tests
+        id: run_tests
+        if: steps.check_test_script.outputs.exists == 'true'
+        run: |
+          cd ${{ matrix.service }}
           npm test -- --coverage
 
-      - name: Skip Notification
-        if: hashFiles(format('{0}/package.json', matrix.service)) == ''
-        run: echo "No package.json found in ${{ matrix.service }}. Skipping tests."
+      - name: No package.json notification
+        if: steps.check_package.outputs.exists == 'false'
+        run: echo "::warning::No package.json found in ${{ matrix.service }}. Skipping Node.js setup, dependency installation, and tests."
 
+      - name: No tests notification
+        if: steps.check_package.outputs.exists == 'true' && steps.check_test_script.outputs.exists == 'false'
+        run: echo "::warning::No test script found in ${{ matrix.service }}/package.json. Skipping tests."
 
-  prepare-timestamp:
-    name: Generate Timestamp
-    needs: test
-    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
-    runs-on: ubuntu-latest
-    outputs:
-      timestamp: ${{ steps.time.outputs.timestamp }}
-    steps:
-      - name: Generate yyyymmdd-hhmmss
-        id: time
-        run: echo "timestamp=$(date +'%Y%m%d-%H%M%S')" >> $GITHUB_OUTPUT
+      - name: Tests passed notification
+        if: steps.check_test_script.outputs.exists == 'true' && success()
+        run: echo "::notice::Tests passed successfully for ${{ matrix.service }}."
 
-
-  build-and-push:
-    name: Build and Push Docker Images
-    needs: [test, prepare-timestamp]
-    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
-    runs-on: ubuntu-latest
-    strategy:
-      matrix:
-        service:
-          [
-            "api-gateway",
-            "auth-service",
-            "user-service",
-            "social-service",
-            "post-service",
-            "interaction-service",
-            "feed-service",
-            "frontend",
-          ]
-
-    steps:
-      - name: Checkout code
-        uses: actions/checkout@v4
-
-      # Only runs if a Dockerfile exists in the folder
       - name: Check if Dockerfile exists
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
         id: check_dockerfile
         run: |
           if [ -f "${{ matrix.service }}/Dockerfile" ]; then
@@ -92,19 +86,32 @@ jobs:
             echo "exists=false" >> $GITHUB_OUTPUT
           fi
 
+      - name: No Dockerfile notification
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main' && steps.check_dockerfile.outputs.exists == 'false'
+        run: echo "::warning::No Dockerfile found in ${{ matrix.service }}. Skipping Docker build and push."
+
+      - name: Generate timestamp
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main' && steps.check_dockerfile.outputs.exists == 'true'
+        id: time
+        run: echo "timestamp=$(date +'%Y%m%d-%H%M%S')" >> $GITHUB_OUTPUT
+
       - name: Log in to Docker Hub
-        if: steps.check_dockerfile.outputs.exists == 'true'
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main' && steps.check_dockerfile.outputs.exists == 'true'
         uses: docker/login-action@v3
         with:
           username: ${{ secrets.DOCKER_USERNAME }}
           password: ${{ secrets.DOCKER_PASSWORD }}
 
-      - name: Build and Push
-        if: steps.check_dockerfile.outputs.exists == 'true'
+      - name: Build and push Docker image
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main' && steps.check_dockerfile.outputs.exists == 'true'
         uses: docker/build-push-action@v5
         with:
           context: ./${{ matrix.service }}
           push: true
           tags: |
-            ${{ secrets.DOCKER_USERNAME }}/${{ matrix.service }}:${{ needs.prepare-timestamp.outputs.timestamp }}
+            ${{ secrets.DOCKER_USERNAME }}/${{ matrix.service }}:${{ steps.time.outputs.timestamp }}
             ${{ secrets.DOCKER_USERNAME }}/${{ matrix.service }}:latest
+
+      - name: Docker build success notification
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main' && steps.check_dockerfile.outputs.exists == 'true' && success()
+        run: echo "::notice::Docker image built and pushed successfully for ${{ matrix.service }}."
