@@ -13,168 +13,221 @@ import {
   generateRefreshToken,
   verifyToken,
 } from "../utils/jwtUtils.js";
+import axios from "axios";
+import { AppError } from "../utils/errorHandler.js";
 
-/**
- * Handles the registration of a new user.
- * Route: POST /api/auth/register
- */
+const USER_SERVICE_URL =
+  process.env.USER_SERVICE_URL || "http://localhost:8002";
+const INVALID_CREDENTIALS_MESSAGE = "Invalid username/email or password.";
+
+const isValidEmail = (email) => /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email);
+
 export const register = async (req, res, next) => {
   try {
-    const { email, username, password } = req.body;
+    const { name, email, username, password } = req.body;
 
-    // 1. Basic Validation
-    if (!email || !username || !password) {
-      return res.status(400).json({
-        error: { message: "Email, username, and password are required" },
-      });
+    if (!name || !email || !username || !password) {
+      throw new AppError(
+        "Fields name, username, email, and password are required.",
+        400,
+        "MISSING_FIELDS",
+      );
     }
 
-    // 2. Check if user already exists
+    if (!isValidEmail(email)) {
+      throw new AppError("Email address is not valid.", 400, "INVALID_EMAIL");
+    }
+
+    if (password.length < 8) {
+      throw new AppError(
+        "Password must be at least 8 characters.",
+        400,
+        "WEAK_PASSWORD",
+      );
+    }
+
     const existingUser = await findUserByEmailOrUsername(email, username);
     if (existingUser) {
-      const conflictField = existingUser.email === email ? "Email" : "Username";
-      return res.status(409).json({
-        error: { message: `${conflictField} is already in use` },
-      });
+      if (existingUser.email === email) {
+        throw new AppError(
+          "This email is already registered.",
+          409,
+          "EMAIL_TAKEN",
+        );
+      }
+
+      throw new AppError(
+        "This username is already in use.",
+        409,
+        "USERNAME_TAKEN",
+      );
     }
 
-    // 3. Hash the password securely
     const passwordHash = await hashPassword(password);
-
-    // 4. Generate a unique UUID for the user
     const userId = uuidv4();
 
-    // 5. Save the user to the database
+    try {
+      await axios.post(`${USER_SERVICE_URL}/internal/users`, {
+        id: userId,
+        name,
+        username,
+        email,
+      });
+    } catch (error) {
+      const status = error.response?.status;
+      const upstreamError = error.response?.data?.error;
+
+      if (status === 409 && upstreamError?.code && upstreamError?.message) {
+        throw new AppError(upstreamError.message, 409, upstreamError.code);
+      }
+
+      if (status === 400 && upstreamError?.code && upstreamError?.message) {
+        throw new AppError(upstreamError.message, 400, upstreamError.code);
+      }
+
+      console.error(
+        "Failed to create user profile in User Service:",
+        error.message,
+      );
+      throw new AppError(
+        "Unable to create user profile. Please try again.",
+        502,
+        "SERVICE_UNAVAILABLE",
+      );
+    }
+
     await createUser(userId, email, username, passwordHash);
 
-    // TODO: In the future, we will make an HTTP call to the User Service here
-    // to create the user's public profile (bio, profile picture, etc.)
-
-    // 6. Send success response
     res.status(201).json({
-      message: "User registered successfully",
-      user: {
-        id: userId,
-        email,
-        username,
-      },
+      message: "User registered successfully.",
+      userId,
     });
   } catch (error) {
-    // Pass any unexpected errors to the global error handler in app.js
     next(error);
   }
 };
 
-/**
- * Handles user login.
- * Route: POST /api/auth/login
- */
 export const login = async (req, res, next) => {
   try {
-    const { identifier, password } = req.body; // identifier can be email or username
+    const { login: loginInput, password } = req.body;
 
-    // 1. Basic Validation
-    if (!identifier || !password) {
-      return res.status(400).json({
-        error: { message: "Email/Username and password are required" },
-      });
+    if (!loginInput || !password) {
+      throw new AppError(
+        "Fields login and password are required.",
+        400,
+        "MISSING_FIELDS",
+      );
     }
 
-    // 2. Find user by email or username
-    const user = await findUserByEmailOrUsername(identifier, identifier);
+    const user = await findUserByEmailOrUsername(loginInput, loginInput);
     if (!user) {
-      return res.status(401).json({
-        error: { message: "Invalid credentials" },
-      });
+      throw new AppError(
+        INVALID_CREDENTIALS_MESSAGE,
+        401,
+        "INVALID_CREDENTIALS",
+      );
     }
 
-    // 3. Verify password
     const isMatch = await comparePassword(password, user.password_hash);
     if (!isMatch) {
-      return res.status(401).json({
-        error: { message: "Invalid credentials" },
-      });
+      throw new AppError(
+        INVALID_CREDENTIALS_MESSAGE,
+        401,
+        "INVALID_CREDENTIALS",
+      );
     }
 
-    // 4. Generate JWTs
+    try {
+      const endpoint = loginInput.includes("@")
+        ? `/internal/users/by-email/${loginInput}`
+        : `/internal/users/by-username/${loginInput}`;
+
+      await axios.get(`${USER_SERVICE_URL}${endpoint}`);
+    } catch (error) {
+      if (error.response?.status === 404) {
+        throw new AppError(
+          INVALID_CREDENTIALS_MESSAGE,
+          401,
+          "INVALID_CREDENTIALS",
+        );
+      }
+
+      console.error(
+        "Failed to verify user profile in User Service:",
+        error.message,
+      );
+      throw new AppError(
+        "Unable to complete login. Please try again.",
+        502,
+        "SERVICE_UNAVAILABLE",
+      );
+    }
+
     const accessToken = generateAccessToken(user.id, user.username);
     const refreshToken = generateRefreshToken(user.id);
-
-    // 5. Save refresh token to database
     const tokenId = uuidv4();
-    const expiresAt = new Date(Date.now() + 7 * 24 * 60 * 60 * 1000); // 7 days from now
+    const expiresAt = new Date(Date.now() + 7 * 24 * 60 * 60 * 1000);
+
     await saveRefreshToken(tokenId, user.id, refreshToken, expiresAt);
 
-    // 6. Send response
     res.status(200).json({
-      message: "Login successful",
       accessToken,
       refreshToken,
-      user: {
-        id: user.id,
-        email: user.email,
-        username: user.username,
-      },
     });
   } catch (error) {
     next(error);
   }
 };
 
-/**
- * Refreshes an access token using a valid refresh token.
- * Route: POST /api/auth/refresh
- */
 export const refreshToken = async (req, res, next) => {
   try {
-    const { refreshToken } = req.body;
+    const { refreshToken: refreshTokenValue } = req.body;
 
-    if (!refreshToken) {
-      return res.status(400).json({
-        error: { message: "Refresh token is required" },
-      });
+    if (!refreshTokenValue) {
+      throw new AppError("Refresh token is required.", 400, "MISSING_FIELDS");
     }
 
-    // 1. Check if token exists in the database
-    const tokenRecord = await findRefreshToken(refreshToken);
+    const tokenRecord = await findRefreshToken(refreshTokenValue);
     if (!tokenRecord) {
-      return res.status(401).json({
-        error: { message: "Invalid refresh token" },
-      });
+      throw new AppError(
+        "Refresh token is invalid or expired.",
+        401,
+        "INVALID_TOKEN",
+      );
     }
 
-    // 2. Check if token is expired in the database
     if (new Date(tokenRecord.expires_at) < new Date()) {
-      await deleteRefreshToken(refreshToken);
-      return res.status(401).json({
-        error: { message: "Refresh token has expired. Please log in again." },
-      });
+      await deleteRefreshToken(refreshTokenValue);
+      throw new AppError(
+        "Refresh token is invalid or expired.",
+        401,
+        "INVALID_TOKEN",
+      );
     }
 
-    // 3. Verify the JWT signature
     let decoded;
     try {
-      decoded = verifyToken(refreshToken);
+      decoded = verifyToken(refreshTokenValue);
     } catch (err) {
-      return res.status(401).json({
-        error: { message: "Invalid or expired token signature" },
-      });
+      throw new AppError(
+        "Refresh token is invalid or expired.",
+        401,
+        "INVALID_TOKEN",
+      );
     }
 
-    // 4. Find the user to get their username for the new access token
     const user = await findUserById(decoded.userId);
     if (!user) {
-      return res.status(401).json({
-        error: { message: "User associated with this token no longer exists" },
-      });
+      throw new AppError(
+        "Refresh token is invalid or expired.",
+        401,
+        "INVALID_TOKEN",
+      );
     }
 
-    // 5. Generate a new access token
     const newAccessToken = generateAccessToken(user.id, user.username);
 
-    // 6. Send response
     res.status(200).json({
-      message: "Token refreshed successfully",
       accessToken: newAccessToken,
     });
   } catch (error) {
@@ -182,25 +235,21 @@ export const refreshToken = async (req, res, next) => {
   }
 };
 
-/**
- * Logs a user out by deleting their refresh token.
- * Route: POST /api/auth/logout
- */
 export const logout = async (req, res, next) => {
   try {
-    const { refreshToken } = req.body;
+    const { refreshToken: refreshTokenValue } = req.body;
 
-    if (!refreshToken) {
-      return res.status(400).json({
-        error: { message: "Refresh token is required" },
-      });
+    if (!refreshTokenValue) {
+      throw new AppError("Refresh token is required.", 400, "MISSING_FIELDS");
     }
 
-    // Delete the token from the database
-    await deleteRefreshToken(refreshToken);
+    const result = await deleteRefreshToken(refreshTokenValue);
+    if (!result.affectedRows) {
+      throw new AppError("Refresh token is invalid.", 401, "INVALID_TOKEN");
+    }
 
     res.status(200).json({
-      message: "Logged out successfully",
+      message: "Logged out successfully.",
     });
   } catch (error) {
     next(error);
