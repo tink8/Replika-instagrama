@@ -65,6 +65,24 @@ export const internalController = {
     }
   },
 
+  // GET /internal/users/:userId (Called by Social Service)
+  getUserById: async (req, res, next) => {
+    try {
+      const user = await userModel.findUserById(req.params.userId);
+      if (!user) throw new AppError("User not found.", 404, "USER_NOT_FOUND");
+
+      res.status(200).json({
+        id: user.id,
+        name: user.name,
+        username: user.username,
+        avatarUrl: user.avatarUrl,
+        isPrivate: Boolean(user.isPrivate),
+      });
+    } catch (error) {
+      next(error);
+    }
+  },
+
   // POST /internal/users/batch (Called by Feed/Interaction services)
   getUsersBatch: async (req, res, next) => {
     try {
