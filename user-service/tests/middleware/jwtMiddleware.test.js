@@ -60,7 +60,7 @@ describe("jwtMiddleware - requireAuth", () => {
 
     expect(next).toHaveBeenCalledWith(expect.any(AppError));
     expect(next.mock.calls[0][0].message).toBe(
-      "Authorization token is required.",
+      "Authorization token is invalid.",
     );
   });
 

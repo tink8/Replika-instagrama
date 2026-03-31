@@ -4,6 +4,7 @@ const mockUserModel = {
   findUserByUsername: jest.fn(),
   findUserByEmail: jest.fn(),
   createUser: jest.fn(),
+  findUserById: jest.fn(),
   getUsersBatch: jest.fn(),
 };
 
@@ -113,6 +114,30 @@ describe("internalController", () => {
       expect(res.status).toHaveBeenCalledWith(200);
       expect(res.json).toHaveBeenCalledWith({
         users: [{ id: "123" }, { id: "456" }],
+      });
+    });
+  });
+
+  describe("getUserById", () => {
+    it("should return user basics", async () => {
+      req.params.userId = "abc-123";
+      mockUserModel.findUserById.mockResolvedValue({
+        id: "abc-123",
+        name: "Ana",
+        username: "ana",
+        avatarUrl: null,
+        isPrivate: 1,
+      });
+
+      await internalController.getUserById(req, res, next);
+
+      expect(res.status).toHaveBeenCalledWith(200);
+      expect(res.json).toHaveBeenCalledWith({
+        id: "abc-123",
+        name: "Ana",
+        username: "ana",
+        avatarUrl: null,
+        isPrivate: true,
       });
     });
   });
