@@ -48,7 +48,14 @@ export const userController = {
         );
       }
 
-      if (username) {
+      if (username !== undefined) {
+        if (!username.trim()) {
+          throw new AppError(
+            "Username cannot be empty.",
+            400,
+            "VALIDATION_ERROR",
+          );
+        }
         const existing = await userModel.findUserByUsername(username);
         if (existing && existing.id !== userId) {
           throw new AppError(
@@ -95,7 +102,8 @@ export const userController = {
 
       // Construct public URL
       const protocol = config.minio.useSSL ? "https" : "http";
-      const avatarUrl = `${protocol}://${config.minio.endPoint}:${config.minio.port}/${bucket}/${fileName}`;
+      const externalEndpoint = process.env.MINIO_PUBLIC_ENDPOINT || "localhost";
+      const avatarUrl = `${protocol}://${externalEndpoint}:${config.minio.port}/${bucket}/${fileName}`;
 
       await userModel.updateUserAvatar(userId, avatarUrl);
       res.status(200).json({ avatarUrl });
@@ -155,8 +163,19 @@ export const userController = {
           validUsers.push(user);
           continue;
         }
-        const access = await socialServiceClient.checkAccess(user.id, token);
-        // If reason is blocked_by_target or blocked_by_requester, we skip them
+        let access;
+        try {
+          access = await socialServiceClient.checkAccess(
+            user.id,
+            requesterId,
+            token,
+          );
+        } catch (serviceError) {
+          // Allow search to keep working when Social Service is temporarily unavailable.
+          validUsers.push(user);
+          continue;
+        }
+
         if (!access.reason.includes("blocked")) {
           validUsers.push(user);
         }
@@ -181,30 +200,56 @@ export const userController = {
       const user = await userModel.findUserById(targetUserId);
       if (!user) throw new AppError("User not found.", 404, "USER_NOT_FOUND");
 
-      // 1. Check Access (Social Service)
-      const access = await socialServiceClient.checkAccess(targetUserId, token);
-      if (access.reason.includes("blocked")) {
-        throw new AppError("User not found.", 404, "USER_NOT_FOUND"); // Hide existence if blocked
+      let access;
+      let counts = { followerCount: 0, followingCount: 0 };
+      let followStatus = "none";
+
+      try {
+        counts = await socialServiceClient.getCounts(targetUserId, token);
+      } catch (e) {}
+
+      if (requesterId === targetUserId) {
+        access = { hasAccess: true, reason: "own_profile" };
+      } else {
+        try {
+          access = await socialServiceClient.checkAccess(
+            targetUserId,
+            requesterId,
+            token,
+          );
+          if (access.reason.includes("blocked")) {
+            throw new AppError("User not found.", 404, "USER_NOT_FOUND");
+          }
+
+          followStatus = await socialServiceClient.getFollowStatus(
+            targetUserId,
+            token,
+          );
+        } catch (serviceError) {
+          if (serviceError instanceof AppError) {
+            throw serviceError;
+          }
+          access = {
+            hasAccess: !Boolean(user.isPrivate),
+            reason: user.isPrivate ? "private_profile" : "service_unavailable",
+          };
+        }
       }
 
-      // 2. Get Counts & Status (Social Service)
-      const counts = await socialServiceClient.getCounts(targetUserId, token);
-      const followStatus = await socialServiceClient.getFollowStatus(
-        targetUserId,
-        token,
-      );
-
-      // 3. Get Posts if access is granted (Post Service)
       let posts = null;
       if (access.hasAccess) {
         posts = await postServiceClient.getUserPosts(targetUserId, token);
       }
+
+      // Always fetch post count via internal route (no access check)
+      const postCount = await postServiceClient.getUserPostCount(targetUserId);
 
       res.status(200).json({
         ...formatUserResponse(user),
         followerCount: counts.followerCount,
         followingCount: counts.followingCount,
         followStatus: followStatus,
+        postCount: postCount,
         posts: posts,
       });
     } catch (error) {
