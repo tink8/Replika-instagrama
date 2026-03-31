@@ -1,45 +1,75 @@
-const pool = require("../config/db");
+import { postModel } from "../models/postModel.js";
+import { AppError } from "../utils/errorHandler.js";
 
-exports.getPostsByUsers = async (req, res, next) => {
-  try {
-    const { userIds, limit = 20, offset = 0 } = req.query;
-    if (!userIds) return res.json([]);
+export const internalPostController = {
+  getPostsByUsers: async (req, res, next) => {
+    try {
+      const userIdsParam = req.query.userIds;
+      const page = Number(req.query.page || 1);
+      const limit = Number(req.query.limit || 20);
 
-    const ids = userIds.split(",");
-    if (ids.length === 0) return res.json([]);
+      if (!userIdsParam) {
+        throw new AppError(
+          "Query parameter 'userIds' is required.",
+          400,
+          "MISSING_FIELDS",
+        );
+      }
 
-    // MySQL2 requires a placeholder '?' for each ID in the IN clause
-    const placeholders = ids.map(() => "?").join(",");
-    const query = `
-      SELECT id, user_id, description, created_at 
-      FROM posts 
-      WHERE user_id IN (${placeholders}) 
-      ORDER BY created_at DESC 
-      LIMIT ? OFFSET ?
-    `;
+      const userIds = userIdsParam
+        .split(",")
+        .map((value) => value.trim())
+        .filter(Boolean);
 
-    const [rows] = await pool.query(query, [
-      ...ids,
-      Number(limit),
-      Number(offset),
-    ]);
-    res.json(rows);
-  } catch (err) {
-    next(err);
-  }
-};
+      if (!userIds.length) {
+        throw new AppError(
+          "Query parameter 'userIds' is required.",
+          400,
+          "MISSING_FIELDS",
+        );
+      }
 
-exports.checkPostExists = async (req, res, next) => {
-  try {
-    const [rows] = await pool.query(
-      "SELECT id, user_id FROM posts WHERE id = ?",
-      [req.params.postId],
-    );
-    if (rows.length === 0) {
-      return res.json({ exists: false });
+      const offset = (page - 1) * limit;
+      const { posts, total } = await postModel.getPostsByUserIds(
+        userIds,
+        limit,
+        offset,
+      );
+
+      res.status(200).json({
+        posts: posts.map((post) => ({
+          id: post.id,
+          userId: post.userId,
+          description: post.description,
+          media: post.media.map(({ id, url, type, order }) => ({
+            id,
+            url,
+            type,
+            order,
+          })),
+          createdAt: post.createdAt,
+        })),
+        page,
+        totalPages: Math.ceil(total / limit),
+      });
+    } catch (error) {
+      next(error);
     }
-    res.json({ exists: true, ownerId: rows[0].user_id });
-  } catch (err) {
-    next(err);
-  }
+  },
+
+  postExists: async (req, res, next) => {
+    try {
+      const owner = await postModel.findPostOwner(req.params.postId);
+      if (!owner) {
+        throw new AppError("Post not found.", 404, "POST_NOT_FOUND");
+      }
+
+      res.status(200).json({
+        exists: true,
+        ownerId: owner.userId,
+      });
+    } catch (error) {
+      next(error);
+    }
+  },
 };

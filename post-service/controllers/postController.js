@@ -1,308 +1,352 @@
-const { v4: uuidv4 } = require("uuid");
-const axios = require("axios");
-const pool = require("../config/db");
-const minioHelper = require("../utils/minioHelper");
-const ApiError = require("../utils/ApiError");
-const env = require("../config/env");
+import { v4 as uuidv4 } from "uuid";
+import { postModel } from "../models/postModel.js";
+import minioClient from "../utils/minioClient.js";
+import { config } from "../config/env.js";
+import { AppError } from "../utils/errorHandler.js";
+import {
+  socialServiceClient,
+  interactionServiceClient,
+} from "../utils/serviceClients.js";
 
-exports.createPost = async (req, res, next) => {
-  const { description } = req.body;
-  const files = req.files;
+const toMediaType = (mimetype) =>
+  mimetype.startsWith("video/") ? "video" : "image";
 
-  if (!files || files.length === 0) {
-    return next(
-      new ApiError(
-        400,
-        "NO_MEDIA",
-        "Post must contain at least one media file",
-      ),
-    );
-  }
+const toPublicMedia = (media) => ({
+  id: media.id,
+  url: media.url,
+  type: media.type,
+  order: media.order,
+});
 
-  const connection = await pool.getConnection();
-  try {
-    await connection.beginTransaction();
+const serializePost = (
+  post,
+  counts = { likeCount: 0, commentCount: 0, isLiked: false },
+) => ({
+  id: post.id,
+  userId: post.userId,
+  description: post.description,
+  media: post.media.map(toPublicMedia),
+  likeCount: counts.likeCount ?? 0,
+  commentCount: counts.commentCount ?? 0,
+  isLiked: Boolean(counts.isLiked),
+  createdAt: post.createdAt,
+});
 
-    const postId = uuidv4();
-    await connection.query(
-      "INSERT INTO posts (id, user_id, description) VALUES (?, ?, ?)",
-      [postId, req.user.userId, description || null],
-    );
+const serializeUserGalleryPost = (
+  post,
+  counts = { likeCount: 0, commentCount: 0, isLiked: false },
+) => ({
+  id: post.id,
+  description: post.description,
+  media: post.media.map(toPublicMedia),
+  likeCount: counts.likeCount ?? 0,
+  commentCount: counts.commentCount ?? 0,
+  isLiked: Boolean(counts.isLiked),
+  createdAt: post.createdAt,
+});
 
-    const mediaInserts = [];
-    for (let i = 0; i < files.length; i++) {
-      const file = files[i];
-      const mediaId = uuidv4();
-      const mediaUrl = await minioHelper.uploadFile(file);
-      const mediaType = file.mimetype.startsWith("video/") ? "video" : "image";
-
-      mediaInserts.push([mediaId, postId, mediaUrl, mediaType, i]);
-    }
-
-    await connection.query(
-      "INSERT INTO post_media (id, post_id, media_url, media_type, display_order) VALUES ?",
-      [mediaInserts],
-    );
-
-    await connection.commit();
-    res.status(201).json({ id: postId, message: "Post created successfully" });
-  } catch (err) {
-    await connection.rollback();
-    next(err);
-  } finally {
-    connection.release();
-  }
+const buildObjectKey = (userId, index, originalName) => {
+  const extension = originalName.includes(".")
+    ? originalName.split(".").pop()
+    : "bin";
+  return `${userId}/${Date.now()}-${index}-${uuidv4()}.${extension}`;
 };
 
-exports.getPost = async (req, res, next) => {
-  try {
-    const [rows] = await pool.query(
-      `
-      SELECT p.id, p.user_id, p.description, p.created_at,
-             m.id as media_id, m.media_url, m.media_type, m.display_order
-      FROM posts p
-      LEFT JOIN post_media m ON p.id = m.post_id
-      WHERE p.id = ?
-      ORDER BY m.display_order ASC
-    `,
-      [req.params.postId],
-    );
+const mapAccessErrorForPost = (reason) => {
+  if (reason.includes("blocked") || reason === "not_found") {
+    return new AppError("Post not found.", 404, "POST_NOT_FOUND");
+  }
 
-    if (rows.length === 0)
-      throw new ApiError(404, "POST_NOT_FOUND", "Post not found");
+  return new AppError(
+    "You do not have access to this post.",
+    403,
+    "ACCESS_DENIED",
+  );
+};
 
-    const post = {
-      id: rows[0].id,
-      userId: rows[0].user_id,
-      description: rows[0].description,
-      createdAt: rows[0].created_at,
-      media: [],
-    };
+const mapAccessErrorForUserPosts = (reason) => {
+  if (reason.includes("blocked") || reason === "not_found") {
+    return new AppError("User not found.", 404, "USER_NOT_FOUND");
+  }
 
-    rows.forEach((r) => {
-      if (r.media_id) {
-        post.media.push({
-          id: r.media_id,
-          url: r.media_url,
-          type: r.media_type,
-          order: r.display_order,
-        });
-      }
-    });
+  return new AppError("This profile is private.", 403, "ACCESS_DENIED");
+};
 
-    // Check access via Social Service (forwarding the JWT token)
-    if (post.userId !== req.user.userId) {
-      try {
-        await axios.get(
-          `${env.socialServiceUrl}/internal/social/check-access/${post.userId}`,
-          {
-            headers: { Authorization: req.headers.authorization },
-          },
-        );
-      } catch (err) {
-        if (err.response && err.response.status === 403) {
-          throw new ApiError(
-            403,
-            "ACCESS_DENIED",
-            "You do not have permission to view this post",
-          );
-        }
-        throw new ApiError(
-          500,
-          "INTERNAL_SERVER_ERROR",
-          "Failed to verify access",
-        );
-      }
-    }
+export const postController = {
+  createPost: async (req, res, next) => {
+    const uploadedObjectKeys = [];
 
-    // Fetch Interaction counts
     try {
-      const countsRes = await axios.get(
-        `${env.interactionServiceUrl}/internal/interactions/counts/${post.id}`,
-      );
-      post.likes = countsRes.data.likes || 0;
-      post.comments = countsRes.data.comments || 0;
-    } catch (err) {
-      post.likes = 0;
-      post.comments = 0; // Fallback if interaction service is down
-    }
+      const userId = req.userId;
+      const description = req.body.description ?? null;
+      const files = req.files || [];
 
-    res.json(post);
-  } catch (err) {
-    next(err);
-  }
-};
-
-exports.updatePost = async (req, res, next) => {
-  try {
-    const { description } = req.body;
-    const [rows] = await pool.query("SELECT user_id FROM posts WHERE id = ?", [
-      req.params.postId,
-    ]);
-
-    if (rows.length === 0)
-      throw new ApiError(404, "POST_NOT_FOUND", "Post not found");
-    if (rows[0].user_id !== req.user.userId)
-      throw new ApiError(403, "ACCESS_DENIED", "You do not own this post");
-
-    await pool.query("UPDATE posts SET description = ? WHERE id = ?", [
-      description,
-      req.params.postId,
-    ]);
-    res.json({ message: "Post updated successfully" });
-  } catch (err) {
-    next(err);
-  }
-};
-
-exports.deletePost = async (req, res, next) => {
-  const connection = await pool.getConnection();
-  try {
-    await connection.beginTransaction();
-
-    const [postRows] = await connection.query(
-      "SELECT user_id FROM posts WHERE id = ?",
-      [req.params.postId],
-    );
-    if (postRows.length === 0)
-      throw new ApiError(404, "POST_NOT_FOUND", "Post not found");
-    if (postRows[0].user_id !== req.user.userId)
-      throw new ApiError(403, "ACCESS_DENIED", "You do not own this post");
-
-    const [mediaRows] = await connection.query(
-      "SELECT media_url FROM post_media WHERE post_id = ?",
-      [req.params.postId],
-    );
-
-    for (const row of mediaRows) {
-      await minioHelper.deleteFile(row.media_url);
-    }
-
-    await connection.query("DELETE FROM posts WHERE id = ?", [
-      req.params.postId,
-    ]);
-
-    await connection.commit();
-    res.json({ message: "Post deleted successfully" });
-  } catch (err) {
-    await connection.rollback();
-    next(err);
-  } finally {
-    connection.release();
-  }
-};
-
-exports.deleteMedia = async (req, res, next) => {
-  const connection = await pool.getConnection();
-  try {
-    await connection.beginTransaction();
-
-    const [postRows] = await connection.query(
-      "SELECT user_id FROM posts WHERE id = ?",
-      [req.params.postId],
-    );
-    if (postRows.length === 0)
-      throw new ApiError(404, "POST_NOT_FOUND", "Post not found");
-    if (postRows[0].user_id !== req.user.userId)
-      throw new ApiError(403, "ACCESS_DENIED", "You do not own this post");
-
-    const [mediaRows] = await connection.query(
-      "SELECT media_url FROM post_media WHERE id = ? AND post_id = ?",
-      [req.params.mediaId, req.params.postId],
-    );
-    if (mediaRows.length === 0)
-      throw new ApiError(404, "MEDIA_NOT_FOUND", "Media not found");
-
-    await minioHelper.deleteFile(mediaRows[0].media_url);
-    await connection.query("DELETE FROM post_media WHERE id = ?", [
-      req.params.mediaId,
-    ]);
-
-    const [remaining] = await connection.query(
-      "SELECT COUNT(*) as count FROM post_media WHERE post_id = ?",
-      [req.params.postId],
-    );
-    if (remaining[0].count === 0) {
-      await connection.query("DELETE FROM posts WHERE id = ?", [
-        req.params.postId,
-      ]);
-    }
-
-    await connection.commit();
-    res.json({ message: "Media deleted successfully" });
-  } catch (err) {
-    await connection.rollback();
-    next(err);
-  } finally {
-    connection.release();
-  }
-};
-
-exports.getUserPosts = async (req, res, next) => {
-  try {
-    const targetUserId = req.params.userId;
-    const { limit = 20, offset = 0 } = req.query;
-
-    if (targetUserId !== req.user.userId) {
-      try {
-        await axios.get(
-          `${env.socialServiceUrl}/internal/social/check-access/${targetUserId}`,
-          {
-            headers: { Authorization: req.headers.authorization },
-          },
+      if (!files.length) {
+        throw new AppError(
+          "At least one image or video is required.",
+          400,
+          "NO_MEDIA",
         );
-      } catch (err) {
-        if (err.response && err.response.status === 403) {
-          throw new ApiError(
-            403,
-            "ACCESS_DENIED",
-            "You do not have permission to view these posts",
+      }
+
+      if (files.length > 20) {
+        throw new AppError(
+          "A post can contain a maximum of 20 media items.",
+          400,
+          "TOO_MANY_MEDIA",
+        );
+      }
+
+      const postId = uuidv4();
+      const bucket = config.minio.bucketName;
+      const media = [];
+
+      for (const [index, file] of files.entries()) {
+        const objectKey = buildObjectKey(userId, index, file.originalname);
+        uploadedObjectKeys.push(objectKey);
+
+        await minioClient.putObject(bucket, objectKey, file.buffer, file.size, {
+          "Content-Type": file.mimetype,
+        });
+
+        const protocol = config.minio.useSSL ? "https" : "http";
+        const externalEndpoint =
+          process.env.MINIO_PUBLIC_ENDPOINT || "localhost";
+        const url = `${protocol}://${externalEndpoint}:${config.minio.port}/${bucket}/${objectKey}`;
+
+        media.push({
+          id: uuidv4(),
+          url,
+          type: toMediaType(file.mimetype),
+          order: index,
+          objectKey,
+        });
+      }
+
+      await postModel.createPost({
+        postId,
+        userId,
+        description,
+        media,
+      });
+
+      const createdPost = await postModel.findPostById(postId);
+      res.status(201).json({
+        id: createdPost.id,
+        description: createdPost.description,
+        media: createdPost.media.map(toPublicMedia),
+        createdAt: createdPost.createdAt,
+      });
+    } catch (error) {
+      for (const objectKey of uploadedObjectKeys) {
+        try {
+          await minioClient.removeObject(config.minio.bucketName, objectKey);
+        } catch (cleanupError) {
+          console.error(
+            "Failed to cleanup uploaded object:",
+            cleanupError.message,
           );
         }
-        throw new ApiError(
-          500,
-          "INTERNAL_SERVER_ERROR",
-          "Failed to verify access",
+      }
+      next(error);
+    }
+  },
+
+  getPost: async (req, res, next) => {
+    try {
+      const post = await postModel.findPostById(req.params.postId);
+      if (!post) {
+        throw new AppError("Post not found.", 404, "POST_NOT_FOUND");
+      }
+
+      const access =
+        req.userId === post.userId
+          ? { hasAccess: true, reason: "own_profile" }
+          : await socialServiceClient.checkAccess(
+              post.userId,
+              req.userId,
+              req.token,
+            );
+
+      if (!access.hasAccess) {
+        throw mapAccessErrorForPost(access.reason);
+      }
+
+      const counts = await interactionServiceClient.getCounts(
+        post.id,
+        req.userId,
+      );
+      res.status(200).json(serializePost(post, counts));
+    } catch (error) {
+      next(error);
+    }
+  },
+
+  updatePost: async (req, res, next) => {
+    try {
+      if (!Object.prototype.hasOwnProperty.call(req.body, "description")) {
+        throw new AppError("Description field is required.", 400, "NO_FIELDS");
+      }
+
+      const post = await postModel.findPostById(req.params.postId);
+      if (!post) {
+        throw new AppError("Post not found.", 404, "POST_NOT_FOUND");
+      }
+
+      if (post.userId !== req.userId) {
+        throw new AppError(
+          "You can only edit your own posts.",
+          403,
+          "ACCESS_DENIED",
         );
       }
+
+      await postModel.updatePostDescription(
+        req.params.postId,
+        req.body.description,
+      );
+      const updatedPost = await postModel.findPostById(req.params.postId);
+      const counts = await interactionServiceClient.getCounts(
+        updatedPost.id,
+        req.userId,
+      );
+      res.status(200).json(serializePost(updatedPost, counts));
+    } catch (error) {
+      next(error);
     }
+  },
 
-    const [rows] = await pool.query(
-      `
-      SELECT p.id, p.user_id, p.description, p.created_at,
-             m.id as media_id, m.media_url, m.media_type, m.display_order
-      FROM (
-          SELECT * FROM posts WHERE user_id = ? ORDER BY created_at DESC LIMIT ? OFFSET ?
-      ) p
-      LEFT JOIN post_media m ON p.id = m.post_id
-      ORDER BY p.created_at DESC, m.display_order ASC
-    `,
-      [targetUserId, Number(limit), Number(offset)],
-    );
-
-    const postsMap = new Map();
-    rows.forEach((r) => {
-      if (!postsMap.has(r.id)) {
-        postsMap.set(r.id, {
-          id: r.id,
-          userId: r.user_id,
-          description: r.description,
-          createdAt: r.created_at,
-          media: [],
-        });
+  deletePost: async (req, res, next) => {
+    try {
+      const post = await postModel.findPostById(req.params.postId);
+      if (!post) {
+        throw new AppError("Post not found.", 404, "POST_NOT_FOUND");
       }
-      if (r.media_id) {
-        postsMap.get(r.id).media.push({
-          id: r.media_id,
-          url: r.media_url,
-          type: r.media_type,
-          order: r.display_order,
-        });
-      }
-    });
 
-    res.json(Array.from(postsMap.values()));
-  } catch (err) {
-    next(err);
-  }
+      if (post.userId !== req.userId) {
+        throw new AppError(
+          "You can only delete your own posts.",
+          403,
+          "ACCESS_DENIED",
+        );
+      }
+
+      for (const media of post.media) {
+        try {
+          await minioClient.removeObject(
+            config.minio.bucketName,
+            media.objectKey,
+          );
+        } catch (cleanupError) {
+          console.error(
+            "Failed to remove media from storage:",
+            cleanupError.message,
+          );
+        }
+      }
+
+      await postModel.deletePost(req.params.postId);
+      res.status(204).send();
+    } catch (error) {
+      next(error);
+    }
+  },
+
+  deleteMedia: async (req, res, next) => {
+    try {
+      const post = await postModel.findPostById(req.params.postId);
+      if (!post) {
+        throw new AppError("Post not found.", 404, "POST_NOT_FOUND");
+      }
+
+      if (post.userId !== req.userId) {
+        throw new AppError(
+          "You can only modify your own posts.",
+          403,
+          "ACCESS_DENIED",
+        );
+      }
+
+      const media = await postModel.findMediaById(
+        req.params.postId,
+        req.params.mediaId,
+      );
+      if (!media) {
+        throw new AppError(
+          "Media item not found in this post.",
+          404,
+          "MEDIA_NOT_FOUND",
+        );
+      }
+
+      try {
+        await minioClient.removeObject(
+          config.minio.bucketName,
+          media.objectKey,
+        );
+      } catch (cleanupError) {
+        console.error(
+          "Failed to remove media from storage:",
+          cleanupError.message,
+        );
+      }
+
+      await postModel.deleteMedia(req.params.mediaId);
+      const remainingMediaCount = await postModel.countMediaForPost(
+        req.params.postId,
+      );
+
+      if (remainingMediaCount === 0) {
+        await postModel.deletePost(req.params.postId);
+      }
+
+      res.status(204).send();
+    } catch (error) {
+      next(error);
+    }
+  },
+
+  getUserPosts: async (req, res, next) => {
+    try {
+      const targetUserId = req.params.userId;
+      const page = Number(req.query.page || 1);
+      const limit = Number(req.query.limit || 12);
+      const offset = (page - 1) * limit;
+
+      const access =
+        req.userId === targetUserId
+          ? { hasAccess: true, reason: "own_profile" }
+          : await socialServiceClient.checkAccess(
+              targetUserId,
+              req.userId,
+              req.token,
+            );
+
+      if (!access.hasAccess) {
+        throw mapAccessErrorForUserPosts(access.reason);
+      }
+
+      const { posts, total } = await postModel.getUserPosts(
+        targetUserId,
+        limit,
+        offset,
+      );
+
+      const counts = await interactionServiceClient.getCountsBatch(
+        posts.map((post) => post.id),
+        req.userId,
+      );
+      const countsMap = new Map(counts.map((item) => [item.postId, item]));
+
+      res.status(200).json({
+        posts: posts.map((post) =>
+          serializeUserGalleryPost(post, countsMap.get(post.id) || undefined),
+        ),
+        page,
+        totalPages: Math.ceil(total / limit),
+      });
+    } catch (error) {
+      next(error);
+    }
+  },
 };
