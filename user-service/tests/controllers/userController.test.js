@@ -54,6 +54,7 @@ const mockSocialClient = {
 };
 const mockPostClient = {
   getUserPosts: jest.fn(),
+  getUserPostCount: jest.fn(),
 };
 await jest.unstable_mockModule("../../utils/serviceClients.js", () => ({
   socialServiceClient: mockSocialClient,
@@ -218,6 +219,7 @@ describe("userController", () => {
       });
       mockSocialClient.getFollowStatus.mockResolvedValue("following");
       mockPostClient.getUserPosts.mockResolvedValue([{ id: "post1" }]);
+      mockPostClient.getUserPostCount.mockResolvedValue(1);
 
       await userController.getUserProfile(req, res, next);
 
@@ -226,6 +228,7 @@ describe("userController", () => {
         expect.objectContaining({
           id: "user456",
           followerCount: 10,
+          postCount: 1,
           posts: [{ id: "post1" }],
         }),
       );
