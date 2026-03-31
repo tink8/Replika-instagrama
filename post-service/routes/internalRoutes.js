@@ -1,8 +1,9 @@
-const express = require("express");
+import express from "express";
+import { internalPostController } from "../controllers/internalPostController.js";
+
 const router = express.Router();
-const internalController = require("../controllers/internalController");
 
-router.get("/posts/by-users", internalController.getPostsByUsers);
-router.get("/posts/:postId/exists", internalController.checkPostExists);
+router.get("/by-users", internalPostController.getPostsByUsers);
+router.get("/:postId/exists", internalPostController.postExists);
 
-module.exports = router;
+export default router;
