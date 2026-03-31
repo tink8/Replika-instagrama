@@ -1,39 +1,26 @@
-const express = require("express");
-const cors = require("cors");
-const env = require("./config/env");
-const errorHandler = require("./middleware/errorHandler");
-const ApiError = require("./utils/ApiError");
+import app from "./app.js";
+import { config } from "./config/env.js";
+import { initMinio } from "./utils/minioClient.js";
+import "./utils/db.js";
 
-const app = express();
+const startServer = async () => {
+  try {
+    await initMinio();
 
-app.use(cors());
-app.use(express.json());
-app.use(express.urlencoded({ extended: true }));
+    app.listen(config.port, () => {
+      console.log(`Post Service is running on port ${config.port}`);
+      console.log(`Environment: ${process.env.NODE_ENV || "development"}`);
+    });
+  } catch (error) {
+    console.error("Failed to start Post Service:", error);
+    process.exit(1);
+  }
+};
 
-// Health check endpoint
-app.get("/health", (req, res) => {
-  res.status(200).json({ status: "ok", service: "post-service" });
+process.on("unhandledRejection", (err) => {
+  console.error("UNHANDLED REJECTION! Shutting down...");
+  console.error(err.name, err.message);
+  process.exit(1);
 });
 
-// TODO: Mount Post routes here
-app.use("/api/posts", require("./routes/postRoutes"));
-app.use("/internal", require("./routes/internalRoutes"));
-
-// 404 Handler for unknown routes
-app.use((req, res, next) => {
-  next(
-    new ApiError(404, "NOT_FOUND", "The requested endpoint does not exist."),
-  );
-});
-
-// Global Error Handler (Strictly follows the API Contract)
-app.use(errorHandler);
-
-// Only start the server if this file is run directly (allows Jest to import `app` without starting the server)
-if (require.main === module) {
-  app.listen(env.port, () => {
-    console.log(`Post Service is running on port ${env.port}`);
-  });
-}
-
-module.exports = app;
+startServer();
