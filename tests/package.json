@@ -1,0 +1,24 @@
+{
+  "name": "integration-tests",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "test": "npx --node-options=--experimental-vm-modules jest --verbose --forceExit --detectOpenHandles",
+    "test:auth": "npx --node-options=--experimental-vm-modules jest auth.test.js --verbose --forceExit",
+    "test:users": "npx --node-options=--experimental-vm-modules jest users.test.js --verbose --forceExit",
+    "test:social": "npx --node-options=--experimental-vm-modules jest social.test.js --verbose --forceExit",
+    "test:posts": "npx --node-options=--experimental-vm-modules jest posts.test.js --verbose --forceExit",
+    "test:interactions": "npx --node-options=--experimental-vm-modules jest interactions.test.js --verbose --forceExit",
+    "test:feed": "npx --node-options=--experimental-vm-modules jest feed.test.js --verbose --forceExit"
+  },
+  "devDependencies": {
+    "jest": "^29.7.0",
+    "@jest/globals": "^29.7.0"
+  },
+  "jest": {
+    "testEnvironment": "node",
+    "transform": {},
+    "testTimeout": 15000
+  }
+}
