@@ -3,7 +3,7 @@ import { useNavigate } from "react-router-dom";
 import { Loader2, Camera } from "lucide-react";
 import { useAuth } from "../context/AuthContext";
 import { apiClient, ApiError } from "../utils/apiClient";
-import type { UserProfile } from "../types/api";
+import type { CurrentUser } from "../types/api";
 
 export default function EditProfile() {
   const { user, checkAuth } = useAuth();
@@ -11,23 +11,21 @@ export default function EditProfile() {
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   const [name, setName] = useState("");
+  const [username, setUsername] = useState("");
   const [bio, setBio] = useState("");
   const [isPrivate, setIsPrivate] = useState(false);
   const [avatarFile, setAvatarFile] = useState<File | null>(null);
   const [previewUrl, setPreviewUrl] = useState<string | null>(null);
-
   const [isLoading, setIsLoading] = useState(true);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [error, setError] = useState("");
 
   useEffect(() => {
     const loadProfile = async () => {
-      if (!user?.username) return;
       try {
-        const data = await apiClient<UserProfile>(
-          `/api/users/${user.username}`,
-        );
+        const data = await apiClient<CurrentUser>("/api/users/me");
         setName(data.name || "");
+        setUsername(data.username || "");
         setBio(data.bio || "");
         setIsPrivate(data.isPrivate);
         setPreviewUrl(data.avatarUrl);
@@ -37,8 +35,9 @@ export default function EditProfile() {
         setIsLoading(false);
       }
     };
+
     loadProfile();
-  }, [user?.username]);
+  }, []);
 
   const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
@@ -53,21 +52,29 @@ export default function EditProfile() {
     setIsSubmitting(true);
     setError("");
 
-    const formData = new FormData();
-    formData.append("name", name);
-    formData.append("bio", bio);
-    formData.append("isPrivate", String(isPrivate));
-    if (avatarFile) {
-      formData.append("avatar", avatarFile);
-    }
-
     try {
-      await apiClient("/api/users/profile", {
-        method: "PUT",
-        body: formData,
+      await apiClient<CurrentUser>("/api/users/me", {
+        method: "PATCH",
+        body: JSON.stringify({
+          name,
+          username,
+          bio,
+          isPrivate,
+        }),
       });
-      await checkAuth(); // Refresh global user context
-      navigate(`/profile/${user?.username}`);
+
+      if (avatarFile) {
+        const avatarFormData = new FormData();
+        avatarFormData.append("avatar", avatarFile);
+
+        await apiClient<{ avatarUrl: string }>("/api/users/me/avatar", {
+          method: "PUT",
+          body: avatarFormData,
+        });
+      }
+
+      await checkAuth();
+      navigate(`/profile/${user?.id}`);
     } catch (err) {
       if (err instanceof ApiError) {
         setError(err.message);
@@ -81,120 +88,146 @@ export default function EditProfile() {
 
   if (isLoading) {
     return (
-      <div className="flex justify-center items-center h-64">
-        <Loader2 className="h-8 w-8 animate-spin text-gray-400" />
+      <div className="state-card">
+        <Loader2 className="spinner-icon" />
       </div>
     );
   }
 
   return (
-    <div className="max-w-xl mx-auto bg-white border border-gray-300 rounded-sm overflow-hidden">
-      <div className="border-b border-gray-300 p-4 text-center font-semibold text-gray-900">
-        Edit Profile
-      </div>
+    <section className="page-card profile-form-card">
+      <header className="page-card-header">
+        <div>
+          <p className="eyebrow">Settings</p>
+          <h1 className="section-title">Edit profile</h1>
+        </div>
+      </header>
 
-      <form onSubmit={handleSubmit} className="p-6">
-        {error && (
-          <div className="mb-4 text-sm text-red-500 text-center">{error}</div>
-        )}
+      <form onSubmit={handleSubmit} className="form-stack">
+        {error && <div className="error-banner compact-banner">{error}</div>}
 
-        {/* Avatar Upload */}
-        <div className="flex items-center space-x-4 mb-6">
-          <div
-            className="h-16 w-16 rounded-full bg-gray-200 overflow-hidden border border-gray-300 relative group cursor-pointer"
+        <div className="avatar-editor">
+          <button
+            type="button"
+            className="avatar avatar-large avatar-button"
             onClick={() => fileInputRef.current?.click()}
           >
             {previewUrl ? (
-              <img
-                src={previewUrl}
-                alt="Avatar"
-                className="h-full w-full object-cover"
-              />
+              <img src={previewUrl} alt="Avatar" className="avatar-image" />
             ) : (
-              <div className="h-full w-full flex items-center justify-center text-gray-500 font-bold text-xl">
-                {user?.username.charAt(0).toUpperCase()}
+              <div className="avatar-fallback">
+                {user?.username?.charAt(0).toUpperCase() || "U"}
               </div>
             )}
-            <div className="absolute inset-0 bg-black bg-opacity-40 flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity">
-              <Camera className="h-6 w-6 text-white" />
-            </div>
-          </div>
-          <div>
-            <div className="font-semibold text-gray-900">{user?.username}</div>
+            <span className="avatar-overlay">
+              <Camera className="section-heading-icon" />
+            </span>
+          </button>
+
+          <div className="avatar-editor-copy">
+            <strong>@{user?.username}</strong>
+            <span className="helper-copy">
+              Upload a new image if you want to refresh your avatar.
+            </span>
             <button
               type="button"
               onClick={() => fileInputRef.current?.click()}
-              className="text-sm text-blue-500 font-semibold"
+              className="inline-link-button"
             >
               Change profile photo
             </button>
-            <input
-              type="file"
-              ref={fileInputRef}
-              onChange={handleFileChange}
-              accept="image/*"
-              className="hidden"
-            />
           </div>
+
+          <input
+            type="file"
+            ref={fileInputRef}
+            onChange={handleFileChange}
+            accept="image/*"
+            className="hidden-input"
+          />
         </div>
 
-        {/* Form Fields */}
-        <div className="space-y-4">
-          <div>
-            <label className="block text-sm font-semibold text-gray-900 mb-1">
-              Name
-            </label>
-            <input
-              type="text"
-              value={name}
-              onChange={(e) => setName(e.target.value)}
-              className="w-full border border-gray-300 rounded-sm px-3 py-2 text-sm focus:ring-1 focus:ring-gray-900 focus:border-gray-900"
-              placeholder="Name"
-            />
-          </div>
+        <label className="field">
+          <span className="field-label">Name</span>
+          <input
+            type="text"
+            name="name"
+            value={name}
+            onChange={(e) => setName(e.target.value)}
+            className="text-input"
+            placeholder="Name"
+          />
+        </label>
 
-          <div>
-            <label className="block text-sm font-semibold text-gray-900 mb-1">
-              Bio
-            </label>
-            <textarea
-              value={bio}
-              onChange={(e) => setBio(e.target.value)}
-              className="w-full border border-gray-300 rounded-sm px-3 py-2 text-sm focus:ring-1 focus:ring-gray-900 focus:border-gray-900 resize-none h-24"
-              placeholder="Write a bio..."
-              maxLength={150}
-            />
-          </div>
+        <label className="field">
+          <span className="field-label">Username</span>
+          <input
+            type="text"
+            name="username"
+            value={username}
+            onChange={(e) => setUsername(e.target.value)}
+            className="text-input"
+            placeholder="Username"
+          />
+        </label>
 
-          <div className="flex items-center justify-between pt-2">
-            <div>
-              <label className="block text-sm font-semibold text-gray-900">
-                Private Account
-              </label>
-              <p className="text-xs text-gray-500">
-                When your account is private, only people you approve can see
-                your photos and videos.
-              </p>
-            </div>
+        <label className="field">
+          <span className="field-label">Bio</span>
+          <textarea
+            value={bio}
+            onChange={(e) => setBio(e.target.value)}
+            className="text-area"
+            placeholder="Write a short bio..."
+            maxLength={150}
+          />
+        </label>
+
+        <div className="settings-row">
+          <div>
+            <div className="field-label">Private Account</div>
+            <p className="helper-copy">
+              Only approved followers can see your posts when privacy is
+              enabled.
+            </p>
+          </div>
+          <label className="switch">
             <input
               type="checkbox"
               checked={isPrivate}
               onChange={(e) => setIsPrivate(e.target.checked)}
-              className="h-5 w-5 text-blue-500 focus:ring-blue-500 border-gray-300 rounded"
             />
-          </div>
+            <span className="switch-track" />
+          </label>
         </div>
 
-        <div className="mt-8 flex justify-end">
+        <div className="actions-row">
+          <button
+            type="button"
+            className="button button-secondary"
+            onClick={() => navigate(`/profile/${user?.id}`)}
+            disabled={isSubmitting}
+          >
+            Cancel
+          </button>
           <button
             type="submit"
             disabled={isSubmitting}
-            className="bg-blue-500 hover:bg-blue-600 text-white font-semibold py-1.5 px-6 rounded-md text-sm transition-colors disabled:opacity-50"
+            className="button button-primary"
           >
-            {isSubmitting ? "Saving..." : "Submit"}
+            {isSubmitting ? (
+              <>
+                <Loader2
+                  className="button-icon-spin"
+                  style={{ width: 16, height: 16 }}
+                />
+                Saving...
+              </>
+            ) : (
+              "Save changes"
+            )}
           </button>
         </div>
       </form>
-    </div>
+    </section>
   );
 }

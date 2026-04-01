@@ -1,4 +1,5 @@
 import { useEffect, useState } from "react";
+import { Loader2, RefreshCw } from "lucide-react";
 import { apiClient, ApiError } from "../utils/apiClient";
 import type { FeedResponse } from "../types/api";
 import PostCard from "../components/PostCard";
@@ -8,60 +9,106 @@ export default function Feed() {
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState("");
 
+  const [isRefreshing, setIsRefreshing] = useState(false);
+
+  const loadFeed = async (forceRefresh = false) => {
+    if (forceRefresh) {
+      setIsRefreshing(true);
+    } else {
+      setIsLoading(true);
+    }
+    setError("");
+
+    try {
+      const data = await apiClient<FeedResponse>(
+        forceRefresh ? "/api/feed/refresh" : "/api/feed",
+      );
+      setFeedData(data);
+    } catch (err) {
+      if (err instanceof ApiError) {
+        setError(err.message);
+      } else {
+        setError("Failed to load feed. Please try again later.");
+      }
+    } finally {
+      setIsLoading(false);
+      setIsRefreshing(false);
+    }
+  };
+
   useEffect(() => {
     const fetchFeed = async () => {
       try {
-        const data = await apiClient<FeedResponse>("/api/feed");
-        setFeedData(data);
-      } catch (err) {
-        if (err instanceof ApiError) {
-          setError(err.message);
-        } else {
-          setError("Failed to load feed. Please try again later.");
-        }
-      } finally {
-        setIsLoading(false);
+        await loadFeed();
+      } catch {
+        // handled in loadFeed
       }
     };
 
-    fetchFeed();
+    void fetchFeed();
   }, []);
 
-  if (isLoading) {
+  if (isLoading && !feedData) {
     return (
-      <div className="flex justify-center items-center h-64">
-        <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-gray-900"></div>
+      <div
+        className="feed-container"
+        style={{
+          display: "flex",
+          justifyContent: "center",
+          paddingTop: "40px",
+        }}
+      >
+        <Loader2 className="spinner-icon" />
       </div>
     );
   }
 
-  if (error) {
+  if (error && !feedData) {
     return (
-      <div className="max-w-lg mx-auto bg-red-50 border border-red-200 text-red-600 p-4 rounded-sm text-center">
-        {error}
+      <div className="feed-container" style={{ paddingTop: "40px" }}>
+        <div className="error-banner">{error}</div>
       </div>
     );
   }
 
   if (!feedData || feedData.posts.length === 0) {
     return (
-      <div className="max-w-lg mx-auto bg-white border border-gray-300 p-8 rounded-sm text-center">
-        <h3 className="text-lg font-semibold text-gray-900 mb-2">
-          Welcome to InstagramClone!
-        </h3>
-        <p className="text-gray-500 text-sm">
-          When you follow people, you'll see the photos and videos they post
-          here.
-        </p>
+      <div className="feed-container">
+        <section style={{ textAlign: "center", paddingTop: "60px" }}>
+          <h1
+            className="page-title"
+            style={{ fontSize: "20px", marginBottom: "8px" }}
+          >
+            Welcome to Instagram
+          </h1>
+          <p className="page-copy">
+            Once you follow people, their newest posts will appear here.
+          </p>
+        </section>
       </div>
     );
   }
 
   return (
-    <div className="pb-12">
-      {feedData.posts.map((post) => (
-        <PostCard key={post.id} post={post} />
-      ))}
+    <div className="feed-container">
+      {error && <div className="error-banner">{error}</div>}
+      <div className="feed-refresh-bar">
+        <button
+          type="button"
+          className="feed-refresh-btn"
+          onClick={() => loadFeed(true)}
+          disabled={isRefreshing}
+          aria-label="Refresh feed"
+        >
+          <RefreshCw size={16} className={isRefreshing ? "spin" : ""} />
+          <span>{isRefreshing ? "Refreshing..." : "Refresh"}</span>
+        </button>
+      </div>
+      <div className="feed-stack">
+        {feedData.posts.map((post) => (
+          <PostCard key={post.id} post={post} />
+        ))}
+      </div>
     </div>
   );
 }
