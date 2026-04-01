@@ -6,23 +6,10 @@ const client = axios.create({
   timeout: 5000
 });
 
-async function purgeInteractionsBetweenUsers(
-  firstUserId,
-  secondUserId,
-  authorizationHeader
-) {
-  try {
-    await client.delete("/internal/interactions/purge", {
-      data: { firstUserId, secondUserId },
-      headers: authorizationHeader
-        ? { Authorization: authorizationHeader }
-        : undefined
-    });
-  } catch (error) {
-    if (error.response && error.response.status < 500) {
-      throw error;
-    }
-  }
+async function purgeInteractionsBetweenUsers(firstUserId, secondUserId) {
+  await client.delete("/internal/interactions/purge", {
+    params: { userA: firstUserId, userB: secondUserId }
+  });
 }
 
 module.exports = {

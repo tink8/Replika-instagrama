@@ -6,17 +6,26 @@ const client = axios.create({
   timeout: 5000
 });
 
-async function getUserProfile(userId, requesterId, authorizationHeader) {
-  const response = await client.get(`/internal/users/${userId}`, {
-    params: requesterId ? { requesterId } : undefined,
-    headers: authorizationHeader
-      ? { Authorization: authorizationHeader }
-      : undefined
-  });
+async function getUserProfile(userId) {
+  const response = await client.get(`/internal/users/${encodeURIComponent(userId)}`);
 
   return response.data;
 }
 
+async function getUsersBatch(userIds) {
+  if (!userIds.length) {
+    return [];
+  }
+
+  const response = await client.post(
+    "/internal/users/batch",
+    { userIds }
+  );
+
+  return response.data.users || [];
+}
+
 module.exports = {
-  getUserProfile
+  getUserProfile,
+  getUsersBatch
 };

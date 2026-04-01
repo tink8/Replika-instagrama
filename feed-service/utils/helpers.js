@@ -5,7 +5,7 @@ function toPositiveInt(value, fallback) {
 
 function parsePagination(query) {
   const page = toPositiveInt(query.page, 1);
-  const limit = Math.min(toPositiveInt(query.limit, 10), 50);
+  const limit = Math.min(toPositiveInt(query.limit, 20), 50);
 
   return {
     page,
@@ -14,10 +14,11 @@ function parsePagination(query) {
 }
 
 function extractCurrentUserId(req) {
-  const userId = Number.parseInt(req.userId || req.headers["x-user-id"], 10);
-  if (!Number.isInteger(userId) || userId <= 0) {
-    const error = new Error("Nedostaje validan X-User-Id header.");
+  const userId = String(req.userId || req.headers["x-user-id"] || "").trim();
+  if (!userId) {
+    const error = new Error("Authorization token is invalid.");
     error.status = 401;
+    error.code = "TOKEN_INVALID";
     throw error;
   }
 
