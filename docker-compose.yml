@@ -1,191 +1,246 @@
-version: "3.9"
-
 services:
-  # MySQL Database
-  mysql:
+  mysql-db:
     image: mysql:8.0
-    container_name: instagram-mysql
+    container_name: mysql-db
+    restart: always
     environment:
-      MYSQL_ROOT_PASSWORD: ${DB_ROOT_PASSWORD:-root}
-      MYSQL_DATABASE: ${DB_NAME:-instagram_db}
-    ports:
-      - "3306:3306"
+      MYSQL_ROOT_PASSWORD: ${DB_PASSWORD}
     volumes:
       - mysql_data:/var/lib/mysql
-    networks:
-      - instagram-network
+      - ./init.sql:/docker-entrypoint-initdb.d/00-init.sql:ro
+      - ./auth-service/database/init.sql:/docker-entrypoint-initdb.d/10-auth-init.sql:ro
+      - ./user-service/database/init.sql:/docker-entrypoint-initdb.d/20-user-init.sql:ro
+      - ./post-service/database/init.sql:/docker-entrypoint-initdb.d/30-post-init.sql:ro
+      - ./interaction-service/database/init.sql:/docker-entrypoint-initdb.d/40-interaction-init.sql:ro
+      - ./social-service/database.sql:/docker-entrypoint-initdb.d/50-social-init.sql:ro
     healthcheck:
-      test: ["CMD", "mysqladmin", "ping", "-h", "localhost"]
-      timeout: 20s
+      test: ["CMD", "mysqladmin", "ping", "-h", "localhost", "-uroot", "-p${DB_PASSWORD}"]
+      interval: 10s
+      timeout: 5s
       retries: 10
-
-  # API Gateway (Entry point)
-  api-gateway:
-    image: ${DOCKER_REGISTRY:-tink8}/api-gateway:${IMAGE_TAG:-latest}
-    container_name: api-gateway
-    ports:
-      - "3000:3000"
-    environment:
-      NODE_ENV: production
-      PORT: 3000
-    depends_on:
-      - auth-service
-      - user-service
-      - post-service
-      - interaction-service
-      - social-service
-      - feed-service
     networks:
-      - instagram-network
-    restart: unless-stopped
+      - instagram-net
 
-  # Auth Service
-  auth-service:
-    image: ${DOCKER_REGISTRY:-tink8}/auth-service:${IMAGE_TAG:-latest}
-    container_name: auth-service
+  minio:
+    image: minio/minio
+    container_name: minio
+    restart: always
     ports:
-      - "8000:8000"
+      - "${MINIO_PORT}:9000"
+      - "9001:9001"
     environment:
-      NODE_ENV: production
-      PORT: 8000
-      DB_HOST: mysql
-      DB_USER: ${DB_USER:-root}
-      DB_PASSWORD: ${DB_ROOT_PASSWORD:-root}
-      DB_NAME: ${DB_NAME:-instagram_db}
-      JWT_SECRET: ${JWT_SECRET:-your-secret-key-change-in-production}
-    depends_on:
-      mysql:
-        condition: service_healthy
-    networks:
-      - instagram-network
-    restart: unless-stopped
-
-  # User Service
-  user-service:
-    image: ${DOCKER_REGISTRY:-tink8}/user-service:${IMAGE_TAG:-latest}
-    container_name: user-service
-    ports:
-      - "8001:8001"
-    environment:
-      NODE_ENV: production
-      PORT: 8001
-      DB_HOST: mysql
-      DB_USER: ${DB_USER:-root}
-      DB_PASSWORD: ${DB_ROOT_PASSWORD:-root}
-      DB_NAME: ${DB_NAME:-instagram_db}
-    depends_on:
-      mysql:
-        condition: service_healthy
-    networks:
-      - instagram-network
-    restart: unless-stopped
-
-  # Post Service
-  post-service:
-    image: ${DOCKER_REGISTRY:-tink8}/post-service:${IMAGE_TAG:-latest}
-    container_name: post-service
-    ports:
-      - "8003:8003"
-    environment:
-      NODE_ENV: production
-      PORT: 8003
-      DB_HOST: mysql
-      DB_USER: ${DB_USER:-root}
-      DB_PASSWORD: ${DB_ROOT_PASSWORD:-root}
-      DB_NAME: ${DB_NAME:-instagram_db}
+      MINIO_ROOT_USER: ${MINIO_ACCESS_KEY}
+      MINIO_ROOT_PASSWORD: ${MINIO_SECRET_KEY}
+    command: server /data --console-address ":9001"
     volumes:
-      - uploads:/app/uploads
-    depends_on:
-      mysql:
-        condition: service_healthy
+      - minio_data:/data
     networks:
-      - instagram-network
-    restart: unless-stopped
+      - instagram-net
 
-  # Interaction Service
+  redis:
+    image: redis:alpine
+    container_name: redis
+    restart: always
+    ports:
+      - "6379:6379"
+    networks:
+      - instagram-net
+
+  api-gateway:
+    build: ./api-gateway
+    container_name: api-gateway
+    restart: unless-stopped
+    env_file:
+      - ./.env
+      - ./api-gateway/.env
+    environment:
+      AUTH_SERVICE_URL: http://auth-service:8001
+      USER_SERVICE_URL: http://user-service:8002
+      POST_SERVICE_URL: http://post-service:8003
+      SOCIAL_SERVICE_URL: http://social-service:8004
+      FEED_SERVICE_URL: http://feed-service:8005
+      INTERACTION_SERVICE_URL: http://interaction-service:8006
+      JWT_PUBLIC_KEY_PATH: /usr/src/keys/public.pem
+    ports:
+      - "${API_GATEWAY_PORT}:8000"
+    volumes:
+      - ./keys:/usr/src/keys:ro
+    depends_on:
+      auth-service:
+        condition: service_started
+      user-service:
+        condition: service_started
+      post-service:
+        condition: service_started
+      interaction-service:
+        condition: service_started
+      social-service:
+        condition: service_started
+      feed-service:
+        condition: service_started
+    networks:
+      - instagram-net
+
+  auth-service:
+    build: ./auth-service
+    container_name: auth-service
+    restart: unless-stopped
+    env_file:
+      - ./.env
+      - ./auth-service/.env
+    environment:
+      DB_HOST: mysql-db
+      USER_SERVICE_URL: http://user-service:8002
+      JWT_PUBLIC_KEY_PATH: /usr/src/keys/public.pem
+      JWT_PRIVATE_KEY_PATH: /usr/src/keys/private.pem
+    ports:
+      - "${AUTH_SERVICE_PORT}:8001"
+    volumes:
+      - ./keys:/usr/src/keys:ro
+    depends_on:
+      mysql-db:
+        condition: service_healthy
+      user-service:
+        condition: service_started
+    networks:
+      - instagram-net
+
+  user-service:
+    build: ./user-service
+    container_name: user-service
+    restart: unless-stopped
+    env_file:
+      - ./.env
+      - ./user-service/.env
+    environment:
+      DB_HOST: mysql-db
+      MINIO_ENDPOINT: minio
+      POST_SERVICE_URL: http://post-service:8003
+      SOCIAL_SERVICE_URL: http://social-service:8004
+      JWT_PUBLIC_KEY_PATH: /usr/src/keys/public.pem
+    ports:
+      - "${USER_SERVICE_PORT}:8002"
+    volumes:
+      - ./keys:/usr/src/keys:ro
+    depends_on:
+      mysql-db:
+        condition: service_healthy
+      minio:
+        condition: service_started
+    networks:
+      - instagram-net
+
+  post-service:
+    build: ./post-service
+    container_name: post-service
+    restart: unless-stopped
+    env_file:
+      - ./.env
+      - ./post-service/.env
+    environment:
+      DB_HOST: mysql-db
+      MINIO_ENDPOINT: minio
+      INTERACTION_SERVICE_URL: http://interaction-service:8006
+      SOCIAL_SERVICE_URL: http://social-service:8004
+      JWT_PUBLIC_KEY_PATH: /usr/src/keys/public.pem
+    ports:
+      - "${POST_SERVICE_PORT}:8003"
+    volumes:
+      - ./keys:/usr/src/keys:ro
+    depends_on:
+      mysql-db:
+        condition: service_healthy
+      minio:
+        condition: service_started
+    networks:
+      - instagram-net
+
   interaction-service:
-    image: ${DOCKER_REGISTRY:-tink8}/interaction-service:${IMAGE_TAG:-latest}
+    build: ./interaction-service
     container_name: interaction-service
-    ports:
-      - "8002:8002"
-    environment:
-      NODE_ENV: production
-      PORT: 8002
-      DB_HOST: mysql
-      DB_USER: ${DB_USER:-root}
-      DB_PASSWORD: ${DB_ROOT_PASSWORD:-root}
-      DB_NAME: ${DB_NAME:-instagram_db}
-    depends_on:
-      mysql:
-        condition: service_healthy
-    networks:
-      - instagram-network
     restart: unless-stopped
+    env_file:
+      - ./.env
+      - ./interaction-service/.env
+    environment:
+      DB_HOST: mysql-db
+      POST_SERVICE_URL: http://post-service:8003
+      USER_SERVICE_URL: http://user-service:8002
+      SOCIAL_SERVICE_URL: http://social-service:8004
+      JWT_PUBLIC_KEY_PATH: /usr/src/keys/public.pem
+    ports:
+      - "${INTERACTION_SERVICE_PORT}:8006"
+    volumes:
+      - ./keys:/usr/src/keys:ro
+    depends_on:
+      mysql-db:
+        condition: service_healthy
+      user-service:
+        condition: service_started
+      post-service:
+        condition: service_started
+    networks:
+      - instagram-net
 
-  # Social Service
   social-service:
-    image: ${DOCKER_REGISTRY:-tink8}/social-service:${IMAGE_TAG:-latest}
+    build: ./social-service
     container_name: social-service
-    ports:
-      - "8004:8004"
-    environment:
-      NODE_ENV: production
-      PORT: 8004
-      DB_HOST: mysql
-      DB_USER: ${DB_USER:-root}
-      DB_PASSWORD: ${DB_ROOT_PASSWORD:-root}
-      DB_NAME: ${DB_NAME:-instagram_db}
-    depends_on:
-      mysql:
-        condition: service_healthy
-    networks:
-      - instagram-network
     restart: unless-stopped
+    env_file:
+      - ./.env
+    environment:
+      DB_HOST: mysql-db
+      USER_SERVICE_URL: http://user-service:8002
+      INTERACTION_SERVICE_URL: http://interaction-service:8006
+      JWT_PUBLIC_KEY_PATH: /usr/src/keys/public.pem
+    ports:
+      - "${SOCIAL_SERVICE_PORT}:8004"
+    volumes:
+      - ./keys:/usr/src/keys:ro
+    depends_on:
+      mysql-db:
+        condition: service_healthy
+      user-service:
+        condition: service_started
+      interaction-service:
+        condition: service_started
+    networks:
+      - instagram-net
 
-  # Feed Service
   feed-service:
-    image: ${DOCKER_REGISTRY:-tink8}/feed-service:${IMAGE_TAG:-latest}
+    build: ./feed-service
     container_name: feed-service
-    ports:
-      - "8005:8005"
-    environment:
-      NODE_ENV: production
-      PORT: 8005
-      DB_HOST: mysql
-      DB_USER: ${DB_USER:-root}
-      DB_PASSWORD: ${DB_ROOT_PASSWORD:-root}
-      DB_NAME: ${DB_NAME:-instagram_db}
-    depends_on:
-      mysql:
-        condition: service_healthy
-    networks:
-      - instagram-network
     restart: unless-stopped
-
-  # Frontend
-  frontend:
-    image: ${DOCKER_REGISTRY:-tink8}/frontend:${IMAGE_TAG:-latest}
-    container_name: frontend
-    ports:
-      - "3001:3001"
+    env_file:
+      - ./.env
     environment:
-      NODE_ENV: production
-      PORT: 3001
-      REACT_APP_API_BASE_URL: http://api-gateway:3000
+      SOCIAL_SERVICE_URL: http://social-service:8004
+      POST_SERVICE_URL: http://post-service:8003
+      USER_SERVICE_URL: http://user-service:8002
+      INTERACTION_SERVICE_URL: http://interaction-service:8006
+      JWT_PUBLIC_KEY_PATH: /usr/src/keys/public.pem
+    ports:
+      - "${FEED_SERVICE_PORT}:8005"
+    volumes:
+      - ./keys:/usr/src/keys:ro
     depends_on:
-      - api-gateway
+      social-service:
+        condition: service_started
+      post-service:
+        condition: service_started
+      user-service:
+        condition: service_started
+      interaction-service:
+        condition: service_started
+      redis:
+        condition: service_started
     networks:
-      - instagram-network
-    restart: unless-stopped
+      - instagram-net
 
-# Networks
 networks:
-  instagram-network:
+  instagram-net:
     driver: bridge
 
-# Volumes
 volumes:
   mysql_data:
-    driver: local
-  uploads:
-    driver: local
+  minio_data:
