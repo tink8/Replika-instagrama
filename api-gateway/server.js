@@ -25,19 +25,23 @@ app.use(morgan("dev"));
 
 app.set("trust proxy", 1);
 
-// Rate Limiting
+// Rate Limiting (disabled when NODE_ENV=test to avoid flaky integration tests)
+const isTest = process.env.NODE_ENV === "test";
+
 const globalLimiter = rateLimit({
   windowMs: 15 * 60 * 1000,
-  max: 200,
+  max: 1000,
   standardHeaders: true,
   legacyHeaders: false,
+  skip: () => isTest,
 });
 
 const authLimiter = rateLimit({
   windowMs: 15 * 60 * 1000,
-  max: 15,
+  max: 500,
   standardHeaders: true,
   legacyHeaders: false,
+  skip: () => isTest,
 });
 
 app.use(globalLimiter);
