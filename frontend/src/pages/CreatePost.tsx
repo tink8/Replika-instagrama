@@ -1,6 +1,6 @@
 import { useState, useRef, useMemo, useEffect } from "react";
 import { useNavigate } from "react-router-dom";
-import { ImagePlus, Loader2, ChevronLeft, ChevronRight, X } from "lucide-react";
+import { ImagePlus, ChevronLeft, ChevronRight, X } from "lucide-react";
 import { apiClient, ApiError } from "../utils/apiClient";
 import { useAuth } from "../context/AuthContext";
 
