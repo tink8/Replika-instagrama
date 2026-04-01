@@ -7,7 +7,7 @@ function normalizeUsers(users) {
 
     const userId = user.id || user.userId;
     if (userId) {
-      map.set(Number(userId), user);
+      map.set(String(userId), user);
     }
   }
 
@@ -32,24 +32,29 @@ function buildTimeline(posts, authorPayload, countsPayload) {
   const countsByPostId = normalizeCounts(countsPayload);
 
   return posts.map((post) => {
-    const authorId = Number(post.authorId || post.userId);
+    const authorId = String(post.authorId || post.userId || "");
     const author = authorsById.get(authorId) || null;
     const counts = countsByPostId[post.id] || countsByPostId[String(post.id)] || {};
 
     return {
-      ...post,
-      author: author
+      id: post.id,
+      user: author
         ? {
-            id: author.id || author.userId,
-            username: author.username || null,
-            name: author.name || null,
+            id: String(author.id || author.userId),
+            username: author.username || "",
             avatarUrl: author.avatarUrl || author.avatar || null
           }
-        : null,
-      interactions: {
-        likesCount: counts.likesCount || 0,
-        commentsCount: counts.commentsCount || 0
-      }
+        : {
+            id: authorId,
+            username: "",
+            avatarUrl: null
+          },
+      description: post.description ?? null,
+      media: post.media || [],
+      likeCount: Number(counts.likeCount || 0),
+      commentCount: Number(counts.commentCount || 0),
+      isLiked: Boolean(counts.isLiked),
+      createdAt: post.createdAt || post.created_at || null
     };
   });
 }

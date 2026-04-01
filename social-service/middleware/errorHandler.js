@@ -5,7 +5,9 @@ module.exports = function errorHandler(error, req, res, next) {
 
   const status = error.status || 500;
   res.status(status).json({
-    error: error.message || "Doslo je do neocekivane greske.",
-    details: error.details || null
+    error: {
+      code: error.code || "INTERNAL_SERVER_ERROR",
+      message: error.message || "Internal server error."
+    }
   });
 };

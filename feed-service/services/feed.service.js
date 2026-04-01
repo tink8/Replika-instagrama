@@ -4,7 +4,6 @@ const { getPostsByUsers } = require("../clients/post.client");
 const { getInteractionCounts } = require("../clients/interaction.client");
 const { getUsersBatch } = require("../clients/user.client");
 const { buildTimeline } = require("./timeline.builder");
-const { buildPaginationMeta } = require("../utils/pagination");
 
 function cacheKey(userId, page, limit) {
   return `feed:${userId}:page:${page}:limit:${limit}`;
@@ -37,68 +36,104 @@ async function safeDeleteByPattern(userId) {
   }
 }
 
-function buildAuthHeaders(currentUserId, authorizationHeader) {
-  const headers = {
-    "X-User-Id": String(currentUserId)
-  };
-
-  if (authorizationHeader) {
-    headers.Authorization = authorizationHeader;
-  }
-
-  return headers;
+function createFeedServiceError() {
+  const error = new Error("Unable to load feed. Please try again.");
+  error.status = 502;
+  error.code = "SERVICE_UNAVAILABLE";
+  return error;
 }
 
 async function buildFeed(currentUserId, pagination, authorizationHeader, forceRefresh) {
   const { page, limit } = pagination;
   const key = cacheKey(currentUserId, page, limit);
 
-  if (!forceRefresh) {
-    const cached = await safeGetCache(key);
-    if (cached) {
-      return JSON.parse(cached);
-    }
-  } else {
+  if (forceRefresh) {
     await safeDeleteByPattern(currentUserId);
   }
 
-  const authHeaders = buildAuthHeaders(currentUserId, authorizationHeader);
-  const followedUserIds = await getFollowingIds(currentUserId, authHeaders);
+  try {
+    // --- Step 1: Get structural data (posts + authors), possibly from cache ---
+    let structuralData = null;
 
-  if (!followedUserIds.length) {
-    const emptyPayload = {
-      items: [],
-      meta: buildPaginationMeta(page, limit, 0)
-    };
-    await safeSetCache(key, emptyPayload);
-    return emptyPayload;
+    if (!forceRefresh) {
+      const cached = await safeGetCache(key);
+      if (cached) {
+        structuralData = JSON.parse(cached);
+      }
+    }
+
+    if (!structuralData) {
+      // Fetch fresh structural data
+      const followedUserIds = await getFollowingIds(currentUserId);
+
+      if (!followedUserIds.length) {
+        return { posts: [], page: 1, totalPages: 0 };
+      }
+
+      const postPayload = await getPostsByUsers(followedUserIds, page, limit);
+      const posts = postPayload.posts || [];
+      const authorIds = [
+        ...new Set(
+          posts
+            .map((post) => String(post.authorId || post.userId || "").trim())
+            .filter(Boolean)
+        )
+      ];
+
+      const authors = await getUsersBatch(authorIds);
+
+      // Build timeline WITHOUT interaction counts — these are just structural posts + authors
+      const timelinePosts = buildTimeline(posts, authors, []).sort(
+        (firstPost, secondPost) =>
+          new Date(secondPost.createdAt || 0) - new Date(firstPost.createdAt || 0)
+      );
+
+      structuralData = {
+        posts: timelinePosts,
+        page: Number(postPayload.page || page),
+        totalPages: Number(postPayload.totalPages || 0)
+      };
+
+      // Cache only the structural data (no interaction counts baked in)
+      if (timelinePosts.length > 0) {
+        await safeSetCache(key, structuralData);
+      }
+    }
+
+    // --- Step 2: Always fetch fresh interaction counts ---
+    const postIds = structuralData.posts.map((post) => post.id).filter(Boolean);
+
+    if (postIds.length > 0) {
+      const freshCounts = await getInteractionCounts(postIds, currentUserId);
+      const countsMap = {};
+      if (Array.isArray(freshCounts)) {
+        for (const entry of freshCounts) {
+          if (entry && entry.postId) {
+            countsMap[entry.postId] = entry;
+          }
+        }
+      }
+
+      // Merge fresh interaction data into the structural posts
+      structuralData.posts = structuralData.posts.map((post) => {
+        const counts = countsMap[post.id] || countsMap[String(post.id)] || {};
+        return {
+          ...post,
+          likeCount: Number(counts.likeCount || 0),
+          commentCount: Number(counts.commentCount || 0),
+          isLiked: Boolean(counts.isLiked)
+        };
+      });
+    }
+
+    return structuralData;
+  } catch (error) {
+    if (error.status && error.code) {
+      throw error;
+    }
+
+    throw createFeedServiceError();
   }
-
-  const postPayload = await getPostsByUsers(followedUserIds, page, limit, authHeaders);
-  const posts = postPayload.items || postPayload.posts || [];
-  const totalItems = postPayload.totalItems || postPayload.total || posts.length;
-  const authorIds = [
-    ...new Set(posts.map((post) => Number(post.authorId || post.userId)).filter(Boolean))
-  ];
-  const postIds = posts.map((post) => post.id).filter(Boolean);
-
-  const [authors, counts] = await Promise.all([
-    getUsersBatch(authorIds, authHeaders),
-    getInteractionCounts(postIds, authHeaders)
-  ]);
-
-  const items = buildTimeline(posts, authors, counts).sort((firstPost, secondPost) => {
-    return new Date(secondPost.createdAt || secondPost.created_at || 0) -
-      new Date(firstPost.createdAt || firstPost.created_at || 0);
-  });
-
-  const payload = {
-    items,
-    meta: buildPaginationMeta(page, limit, totalItems)
-  };
-
-  await safeSetCache(key, payload);
-  return payload;
 }
 
 module.exports = {

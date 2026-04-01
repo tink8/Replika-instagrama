@@ -1,62 +1,70 @@
 const socialService = require("../services/social.service");
-const { toPositiveInt } = require("../utils/validators");
+const { toIdString, parsePagination } = require("../utils/validators");
 
 function getCurrentUserId(req) {
-  return toPositiveInt(req.userId || req.headers["x-user-id"], "X-User-Id");
+  return toIdString(req.userId || req.headers["x-user-id"], "X-User-Id");
 }
 
 async function followUser(req, res) {
   const currentUserId = getCurrentUserId(req);
-  const targetUserId = toPositiveInt(req.params.userId, "userId");
-  const result = await socialService.followUser(
-    currentUserId,
-    targetUserId,
-    req.headers.authorization
-  );
+  const targetUserId = toIdString(req.params.userId, "userId");
+  const result = await socialService.followUser(currentUserId, targetUserId);
 
-  res.status(result.status === "requested" ? 202 : 200).json(result);
+  res.status(201).json(result);
 }
 
 async function unfollowUser(req, res) {
   const currentUserId = getCurrentUserId(req);
-  const targetUserId = toPositiveInt(req.params.userId, "userId");
-  const result = await socialService.unfollowUser(currentUserId, targetUserId);
+  const targetUserId = toIdString(req.params.userId, "userId");
+  await socialService.unfollowUser(currentUserId, targetUserId);
 
-  res.json(result);
+  res.status(204).send();
 }
 
 async function removeFollower(req, res) {
   const currentUserId = getCurrentUserId(req);
-  const followerUserId = toPositiveInt(req.params.userId, "userId");
-  const result = await socialService.removeFollower(currentUserId, followerUserId);
+  const followerUserId = toIdString(req.params.userId, "userId");
+  await socialService.removeFollower(currentUserId, followerUserId);
 
-  res.json(result);
+  res.status(204).send();
 }
 
 async function getFollowers(req, res) {
-  const userId = toPositiveInt(req.params.userId, "userId");
-  const followers = await socialService.listFollowers(userId);
+  const currentUserId = getCurrentUserId(req);
+  const userId = toIdString(req.params.userId, "userId");
+  const pagination = parsePagination(req.query);
+  const followers = await socialService.listFollowers(
+    currentUserId,
+    userId,
+    pagination
+  );
 
-  res.json({ items: followers });
+  res.json(followers);
 }
 
 async function getFollowing(req, res) {
-  const userId = toPositiveInt(req.params.userId, "userId");
-  const following = await socialService.listFollowing(userId);
+  const currentUserId = getCurrentUserId(req);
+  const userId = toIdString(req.params.userId, "userId");
+  const pagination = parsePagination(req.query);
+  const following = await socialService.listFollowing(
+    currentUserId,
+    userId,
+    pagination
+  );
 
-  res.json({ items: following });
+  res.json(following);
 }
 
 async function getFollowStatus(req, res) {
   const currentUserId = getCurrentUserId(req);
-  const targetUserId = toPositiveInt(req.params.userId, "userId");
+  const targetUserId = toIdString(req.params.userId, "userId");
   const status = await socialService.getFollowStatus(currentUserId, targetUserId);
 
   res.json(status);
 }
 
 async function getCounts(req, res) {
-  const userId = toPositiveInt(req.params.userId, "userId");
+  const userId = toIdString(req.params.userId, "userId");
   const counts = await socialService.getCounts(userId);
 
   res.json(counts);
@@ -66,12 +74,12 @@ async function getPendingRequests(req, res) {
   const currentUserId = getCurrentUserId(req);
   const requests = await socialService.listPendingRequests(currentUserId);
 
-  res.json({ items: requests });
+  res.json({ requests });
 }
 
 async function acceptRequest(req, res) {
   const currentUserId = getCurrentUserId(req);
-  const requestId = toPositiveInt(req.params.requestId, "requestId");
+  const requestId = toIdString(req.params.requestId, "requestId");
   const result = await socialService.updateFollowRequestStatus(
     currentUserId,
     requestId,
@@ -83,7 +91,7 @@ async function acceptRequest(req, res) {
 
 async function declineRequest(req, res) {
   const currentUserId = getCurrentUserId(req);
-  const requestId = toPositiveInt(req.params.requestId, "requestId");
+  const requestId = toIdString(req.params.requestId, "requestId");
   const result = await socialService.updateFollowRequestStatus(
     currentUserId,
     requestId,
@@ -95,48 +103,40 @@ async function declineRequest(req, res) {
 
 async function blockUser(req, res) {
   const currentUserId = getCurrentUserId(req);
-  const targetUserId = toPositiveInt(req.params.userId, "userId");
-  const result = await socialService.blockUser(
-    currentUserId,
-    targetUserId,
-    req.headers.authorization
-  );
+  const targetUserId = toIdString(req.params.userId, "userId");
+  const result = await socialService.blockUser(currentUserId, targetUserId);
 
-  res.json(result);
+  res.status(201).json(result);
 }
 
 async function unblockUser(req, res) {
   const currentUserId = getCurrentUserId(req);
-  const targetUserId = toPositiveInt(req.params.userId, "userId");
-  const result = await socialService.unblockUser(currentUserId, targetUserId);
+  const targetUserId = toIdString(req.params.userId, "userId");
+  await socialService.unblockUser(currentUserId, targetUserId);
 
-  res.json(result);
+  res.status(204).send();
 }
 
 async function getBlockedUsers(req, res) {
   const currentUserId = getCurrentUserId(req);
   const blockedUsers = await socialService.listBlockedUsers(currentUserId);
 
-  res.json({ items: blockedUsers });
+  res.json(blockedUsers);
 }
 
 async function checkAccess(req, res) {
-  const requesterId = getCurrentUserId(req);
-  const targetUserId = toPositiveInt(req.params.targetUserId, "targetUserId");
-  const access = await socialService.checkAccess(
-    requesterId,
-    targetUserId,
-    req.headers.authorization
-  );
+  const requesterId = toIdString(req.headers["x-user-id"], "X-User-Id");
+  const targetUserId = toIdString(req.params.targetUserId, "targetUserId");
+  const access = await socialService.checkAccess(requesterId, targetUserId);
 
   res.json(access);
 }
 
 async function getFollowingIdList(req, res) {
-  const userId = toPositiveInt(req.params.userId, "userId");
+  const userId = toIdString(req.params.userId, "userId");
   const followingIds = await socialService.getFollowingIdList(userId);
 
-  res.json({ userIds: followingIds });
+  res.json({ followingIds });
 }
 
 async function healthCheck(req, res) {

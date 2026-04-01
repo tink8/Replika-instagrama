@@ -1,58 +1,75 @@
-const fs = require("fs");
-const path = require("path");
-const jwt = require("jsonwebtoken");
+const { verifyJwt } = require("../utils/jwt");
 
-function resolvePublicKeyPath() {
-  const configuredPath = process.env.JWT_PUBLIC_KEY_PATH;
-  if (configuredPath) {
-    return configuredPath;
-  }
-
-  return path.resolve(__dirname, "../../keys/public.pem");
+function sendAuthError(res, status, code, message) {
+  return res.status(status).json({
+    error: {
+      code,
+      message
+    }
+  });
 }
-
-function loadPublicKey() {
-  const publicKeyPath = resolvePublicKeyPath();
-
-  if (!fs.existsSync(publicKeyPath)) {
-    throw new Error(`JWT public key nije pronadjen na putanji: ${publicKeyPath}`);
-  }
-
-  return fs.readFileSync(publicKeyPath, "utf8");
-}
-
-const publicKey = loadPublicKey();
 
 module.exports = function authMiddleware(req, res, next) {
-  const authorizationHeader = req.headers.authorization || "";
-  const [scheme, token] = authorizationHeader.split(" ");
+  const authorizationHeader = req.headers.authorization;
 
-  if (scheme !== "Bearer" || !token) {
-    return res.status(401).json({
-      error: "Nedostaje validan Bearer token."
-    });
+  if (!authorizationHeader) {
+    return sendAuthError(
+      res,
+      401,
+      "TOKEN_MISSING",
+      "Authorization token is required."
+    );
+  }
+
+  if (!authorizationHeader.startsWith("Bearer ")) {
+    return sendAuthError(
+      res,
+      401,
+      "TOKEN_MALFORMED",
+      "Authorization token is malformed."
+    );
+  }
+
+  const token = authorizationHeader.slice("Bearer ".length).trim();
+  if (!token) {
+    return sendAuthError(
+      res,
+      401,
+      "TOKEN_MALFORMED",
+      "Authorization token is malformed."
+    );
   }
 
   try {
-    const payload = jwt.verify(token, publicKey, {
-      algorithms: ["RS256"]
-    });
-
-    const userId = payload.sub || payload.userId || payload.id;
+    const payload = verifyJwt(token);
+    const userId = payload.userId || payload.sub || payload.id;
     if (!userId) {
-      return res.status(401).json({
-        error: "JWT payload ne sadrzi korisnicki identitet."
-      });
+      return sendAuthError(
+        res,
+        401,
+        "TOKEN_INVALID",
+        "Authorization token is invalid."
+      );
     }
 
     req.user = payload;
-    req.userId = Number(userId);
-    req.headers["x-user-id"] = String(userId);
-    return next();
+    req.userId = String(userId);
+    next();
   } catch (error) {
-    return res.status(401).json({
-      error: "JWT token nije validan.",
-      details: error.message
-    });
+    if (error.name === "TokenExpiredError") {
+      return sendAuthError(
+        res,
+        401,
+        "TOKEN_EXPIRED",
+        "Authorization token has expired."
+      );
+    }
+
+    return sendAuthError(
+      res,
+      401,
+      "TOKEN_INVALID",
+      "Authorization token is invalid."
+    );
   }
 };
