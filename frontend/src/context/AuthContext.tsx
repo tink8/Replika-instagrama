@@ -1,40 +1,59 @@
 import React, { createContext, useContext, useState, useEffect } from "react";
-import type { User, LoginResponse } from "../types/api";
-import { apiClient } from "../utils/apiClient";
+import type { CurrentUser, LoginResponse } from "../types/api";
+import { apiClient, ApiError } from "../utils/apiClient";
 
 interface AuthContextType {
-  user: User | null;
+  user: CurrentUser | null;
   isLoading: boolean;
-  login: (credentials: any) => Promise<void>;
-  register: (userData: any, isPrivate: boolean) => Promise<void>;
+  login: (credentials: { login: string; password: string }) => Promise<void>;
+  register: (
+    userData: {
+      name: string;
+      username: string;
+      email: string;
+      password: string;
+    },
+    isPrivate: boolean,
+  ) => Promise<void>;
   logout: () => Promise<void>;
   isAuthenticated: boolean;
-  checkAuth: () => Promise<void>; // Made this required instead of optional
+  checkAuth: () => Promise<void>;
 }
 
 const AuthContext = createContext<AuthContextType | undefined>(undefined);
 
 export const AuthProvider = ({ children }: { children: React.ReactNode }) => {
-  const [user, setUser] = useState<User | null>(null);
+  const [user, setUser] = useState<CurrentUser | null>(null);
   const [isLoading, setIsLoading] = useState(true);
 
-  // Extracted the user loading logic into checkAuth so it can be called from anywhere
   const checkAuth = async () => {
     const token = localStorage.getItem("access_token");
-    if (token) {
-      try {
-        const userData = await apiClient<User>("/api/users/me");
-        setUser(userData);
-      } catch (error) {
-        console.error("Failed to load user profile", error);
+    if (!token) {
+      setUser(null);
+      return;
+    }
+
+    try {
+      const userData = await apiClient<CurrentUser>("/api/users/me");
+      setUser(userData);
+    } catch (error) {
+      // Only clear session on real auth errors (401 / token invalid).
+      // Transient errors (429 rate-limit, 500, network) should NOT log the user out.
+      const isAuthError =
+        error instanceof ApiError &&
+        (error.code === "TOKEN_EXPIRED" ||
+          error.code === "TOKEN_INVALID" ||
+          error.code === "UNAUTHORIZED");
+
+      if (isAuthError) {
         localStorage.removeItem("access_token");
         localStorage.removeItem("refresh_token");
         setUser(null);
       }
+      // For non-auth errors: keep current user state, silently ignore
     }
   };
 
-  // On initial load, check auth and then stop loading
   useEffect(() => {
     const initAuth = async () => {
       await checkAuth();
@@ -52,24 +71,28 @@ export const AuthProvider = ({ children }: { children: React.ReactNode }) => {
     localStorage.setItem("access_token", data.accessToken);
     localStorage.setItem("refresh_token", data.refreshToken);
 
-    // Fetch and set the user profile after successful login
-    const userData = await apiClient<User>("/api/users/me");
+    const userData = await apiClient<CurrentUser>("/api/users/me");
     setUser(userData);
   };
 
-  const register = async (userData: any, isPrivate: boolean) => {
-    // 1. Register the user
+  const register = async (
+    userData: {
+      name: string;
+      username: string;
+      email: string;
+      password: string;
+    },
+    isPrivate: boolean,
+  ) => {
     await apiClient("/api/auth/register", {
       method: "POST",
       body: JSON.stringify(userData),
     });
 
-    // 2. Automatically log them in
     await login({ login: userData.username, password: userData.password });
 
-    // 3. The register API doesn't take 'isPrivate', so we PATCH it immediately after login
     if (isPrivate) {
-      const updatedUser = await apiClient<User>("/api/users/me", {
+      const updatedUser = await apiClient<CurrentUser>("/api/users/me", {
         method: "PATCH",
         body: JSON.stringify({ isPrivate: true }),
       });
@@ -103,7 +126,7 @@ export const AuthProvider = ({ children }: { children: React.ReactNode }) => {
         register,
         logout,
         isAuthenticated: !!user,
-        checkAuth, // Added checkAuth to the provider value here!
+        checkAuth,
       }}
     >
       {!isLoading && children}

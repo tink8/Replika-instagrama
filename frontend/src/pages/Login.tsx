@@ -32,61 +32,62 @@ export default function Login() {
   };
 
   return (
-    <div className="min-h-screen flex items-center justify-center bg-gray-50 py-12 px-4 sm:px-6 lg:px-8">
-      <div className="max-w-sm w-full space-y-8 bg-white p-8 border border-gray-300 rounded-sm">
-        <div>
-          <h2 className="mt-6 text-center text-4xl font-bold text-gray-900 italic">
-            InstagramClone
-          </h2>
-        </div>
-
-        {error && (
-          <div className="bg-red-50 text-red-500 p-3 rounded-sm text-sm text-center border border-red-200">
-            {error}
+    <div className="auth-shell">
+      <div className="auth-column">
+        <section className="auth-card">
+          <div className="auth-intro">
+            <h1 className="auth-logo">Instagram</h1>
           </div>
-        )}
 
-        <form className="mt-8 space-y-4" onSubmit={handleSubmit}>
-          <div>
-            <input
-              type="text"
-              required
-              className="appearance-none rounded-sm relative block w-full px-3 py-2 border border-gray-300 placeholder-gray-500 text-gray-900 focus:outline-none focus:ring-blue-500 focus:border-blue-500 sm:text-sm bg-gray-50"
-              placeholder="Username or email address"
-              value={identifier}
-              onChange={(e) => setIdentifier(e.target.value)}
-            />
-          </div>
-          <div>
-            <input
-              type="password"
-              required
-              className="appearance-none rounded-sm relative block w-full px-3 py-2 border border-gray-300 placeholder-gray-500 text-gray-900 focus:outline-none focus:ring-blue-500 focus:border-blue-500 sm:text-sm bg-gray-50"
-              placeholder="Password"
-              value={password}
-              onChange={(e) => setPassword(e.target.value)}
-            />
-          </div>
-          <button
-            type="submit"
-            disabled={isLoading}
-            className="group relative w-full flex justify-center py-2 px-4 border border-transparent text-sm font-medium rounded-md text-white bg-blue-500 hover:bg-blue-600 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500 disabled:opacity-50"
-          >
-            {isLoading ? "Logging in..." : "Log In"}
-          </button>
-        </form>
-      </div>
+          {error && <div className="error-banner">{error}</div>}
 
-      <div className="max-w-sm w-full mt-4 bg-white p-4 border border-gray-300 rounded-sm text-center">
-        <p className="text-sm text-gray-600">
-          Don't have an account?{" "}
-          <Link
-            to="/register"
-            className="font-medium text-blue-500 hover:text-blue-400"
-          >
-            Sign up
-          </Link>
-        </p>
+          <form className="form-stack" onSubmit={handleSubmit}>
+            <label
+              className="field"
+              style={{ width: "100%", marginBottom: "8px" }}
+            >
+              <input
+                type="text"
+                required
+                className="text-input"
+                placeholder="Username or email address"
+                value={identifier}
+                onChange={(e) => setIdentifier(e.target.value)}
+              />
+            </label>
+
+            <label
+              className="field"
+              style={{ width: "100%", marginBottom: "8px" }}
+            >
+              <input
+                type="password"
+                required
+                className="text-input"
+                placeholder="Password"
+                value={password}
+                onChange={(e) => setPassword(e.target.value)}
+              />
+            </label>
+
+            <button
+              type="submit"
+              disabled={isLoading}
+              className="button button-primary"
+            >
+              {isLoading ? "Logging in..." : "Log In"}
+            </button>
+          </form>
+        </section>
+
+        <section className="auth-card auth-card-secondary">
+          <p className="auth-footnote">
+            Don&apos;t have an account?
+            <Link to="/register" className="inline-link">
+              Sign up
+            </Link>
+          </p>
+        </section>
       </div>
     </div>
   );

@@ -1,6 +1,7 @@
 import type { ApiErrorResponse, RefreshResponse } from "../types/api";
 
-const API_BASE_URL = ""; // Leave empty if proxying via Vite, or set to your API Gateway URL (e.g., 'http://localhost:8080')
+const rawApiBaseUrl = import.meta.env.VITE_API_URL?.trim() || "";
+const API_BASE_URL = rawApiBaseUrl.replace(/\/$/, "");
 
 export class ApiError extends Error {
   code: string;
@@ -60,8 +61,16 @@ export async function apiClient<T>(
     headers,
   });
 
+  // Handle Rate Limiting — never treat 429 as an auth error
+  if (response.status === 429) {
+    throw new ApiError(
+      "RATE_LIMITED",
+      "Too many requests. Please wait a moment and try again.",
+    );
+  }
+
   // Handle Token Expiration
-  if (response.status === 401) {
+  if (response.status === 401 && endpoint !== "/api/auth/refresh") {
     const errorData = await response
       .clone()
       .json()

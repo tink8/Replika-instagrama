@@ -6,7 +6,7 @@ import Login from "./pages/Login";
 import Register from "./pages/Register";
 import Layout from "./components/Layout";
 import Feed from "./pages/Feed";
-import Search from "./pages/Search";
+// Search is now a slide-out panel in Layout
 import CreatePost from "./pages/CreatePost";
 import Profile from "./pages/Profile";
 import SinglePost from "./pages/SinglePost";
@@ -16,7 +16,13 @@ import EditProfile from "./pages/EditProfile";
 const ProtectedRoute = ({ children }: { children: React.ReactNode }) => {
   const { isAuthenticated, isLoading } = useAuth();
 
-  if (isLoading) return null; // Or a loading spinner
+  if (isLoading) {
+    return (
+      <div className="state-screen">
+        <div className="spinner" />
+      </div>
+    );
+  }
   if (!isAuthenticated) return <Navigate to="/login" replace />;
 
   return <>{children}</>;
@@ -41,9 +47,9 @@ export default function App() {
             }
           >
             <Route index element={<Feed />} />
-            <Route path="search" element={<Search />} />
+            {/* Search is now a slide-out panel in Layout */}
             <Route path="create" element={<CreatePost />} />
-            <Route path="profile/:username" element={<Profile />} />
+            <Route path="profile/:userId" element={<Profile />} />
             <Route path="post/:postId" element={<SinglePost />} />
             <Route path="settings/profile" element={<EditProfile />} />
           </Route>

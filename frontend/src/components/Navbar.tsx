@@ -44,7 +44,7 @@ export const Navbar: React.FC = () => {
             <Heart className="w-6 h-6" />
           </button>
           <Link
-            to={`/profile/${user.username}`}
+            to={`/profile/${user.id ?? user.username}`}
             className="text-gray-900 hover:text-gray-600"
           >
             <User className="w-6 h-6" />
