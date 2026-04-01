@@ -27,9 +27,7 @@ await jest.unstable_mockModule("../../utils/errorHandler.js", () => ({
 const { requireAuth } = await import("../../utils/jwtMiddleware.js");
 
 describe("interaction-service jwtMiddleware", () => {
-  let req;
-  let res;
-  let next;
+  let req, res, next;
 
   beforeEach(() => {
     req = { headers: {} };
@@ -38,7 +36,7 @@ describe("interaction-service jwtMiddleware", () => {
     jest.clearAllMocks();
   });
 
-  it("sets req.userId for a valid user token", () => {
+  it("should set req.userId for a valid user token", () => {
     req.headers.authorization = "Bearer validtoken";
     mockJwt.verify.mockReturnValue({ userId: "user-1" });
 
@@ -47,5 +45,56 @@ describe("interaction-service jwtMiddleware", () => {
     expect(req.userId).toBe("user-1");
     expect(req.token).toBe("validtoken");
     expect(next).toHaveBeenCalledWith();
+  });
+
+  it("should return TOKEN_MISSING when no authorization header", () => {
+    requireAuth(req, res, next);
+
+    expect(next).toHaveBeenCalledWith(expect.any(AppError));
+    expect(next.mock.calls[0][0].errorCode).toBe("TOKEN_MISSING");
+  });
+
+  it("should return TOKEN_INVALID for non-Bearer token", () => {
+    req.headers.authorization = "Basic abc123";
+
+    requireAuth(req, res, next);
+
+    expect(next).toHaveBeenCalledWith(expect.any(AppError));
+    expect(next.mock.calls[0][0].errorCode).toBe("TOKEN_INVALID");
+  });
+
+  it("should return TOKEN_INVALID for Bearer with empty token", () => {
+    req.headers.authorization = "Bearer ";
+
+    requireAuth(req, res, next);
+
+    expect(next).toHaveBeenCalledWith(expect.any(AppError));
+    expect(next.mock.calls[0][0].errorCode).toBe("TOKEN_INVALID");
+  });
+
+  it("should return TOKEN_EXPIRED for expired token", () => {
+    req.headers.authorization = "Bearer expiredtoken";
+    const expiredError = new Error("jwt expired");
+    expiredError.name = "TokenExpiredError";
+    mockJwt.verify.mockImplementation(() => {
+      throw expiredError;
+    });
+
+    requireAuth(req, res, next);
+
+    expect(next).toHaveBeenCalledWith(expect.any(AppError));
+    expect(next.mock.calls[0][0].errorCode).toBe("TOKEN_EXPIRED");
+  });
+
+  it("should return TOKEN_INVALID for malformed token", () => {
+    req.headers.authorization = "Bearer badtoken";
+    mockJwt.verify.mockImplementation(() => {
+      throw new Error("invalid signature");
+    });
+
+    requireAuth(req, res, next);
+
+    expect(next).toHaveBeenCalledWith(expect.any(AppError));
+    expect(next.mock.calls[0][0].errorCode).toBe("TOKEN_INVALID");
   });
 });
