@@ -105,7 +105,9 @@ export const interactionModel = {
   getCountsForPostIds: async (postIds, currentUserId = null) => {
     if (!postIds.length) return [];
 
-    const placeholders = postIds.map(() => "?").join(",");
+    // Normalize all postIds to strings for reliable comparison
+    const normalizedPostIds = postIds.map((id) => String(id).trim());
+    const placeholders = normalizedPostIds.map(() => "?").join(",");
     const [likeRows] = await pool.execute(
       `
         SELECT postId, COUNT(*) AS likeCount
@@ -113,7 +115,7 @@ export const interactionModel = {
         WHERE postId IN (${placeholders})
         GROUP BY postId
       `,
-      postIds,
+      normalizedPostIds,
     );
     const [commentRows] = await pool.execute(
       `
@@ -122,10 +124,10 @@ export const interactionModel = {
         WHERE postId IN (${placeholders})
         GROUP BY postId
       `,
-      postIds,
+      normalizedPostIds,
     );
 
-    let userLikes = [];
+    const userLikedPostIds = new Set();
     if (currentUserId) {
       const [userLikeRows] = await pool.execute(
         `
@@ -133,34 +135,40 @@ export const interactionModel = {
           FROM likes
           WHERE userId = ? AND postId IN (${placeholders})
         `,
-        [currentUserId, ...postIds],
+        [String(currentUserId), ...normalizedPostIds],
       );
-      userLikes = userLikeRows.map((row) => row.postId);
+      for (const row of userLikeRows) {
+        userLikedPostIds.add(String(row.postId));
+      }
     }
 
     const countsMap = new Map(
-      postIds.map((postId) => [
+      normalizedPostIds.map((postId) => [
         postId,
         {
           postId,
           likeCount: 0,
           commentCount: 0,
-          isLiked: userLikes.includes(postId),
+          isLiked: userLikedPostIds.has(postId),
         },
       ]),
     );
 
     for (const row of likeRows) {
-      const current = countsMap.get(row.postId);
-      current.likeCount = row.likeCount;
+      const key = String(row.postId);
+      if (countsMap.has(key)) {
+        countsMap.get(key).likeCount = row.likeCount;
+      }
     }
 
     for (const row of commentRows) {
-      const current = countsMap.get(row.postId);
-      current.commentCount = row.commentCount;
+      const key = String(row.postId);
+      if (countsMap.has(key)) {
+        countsMap.get(key).commentCount = row.commentCount;
+      }
     }
 
-    return postIds.map((postId) => countsMap.get(postId));
+    return normalizedPostIds.map((postId) => countsMap.get(postId));
   },
 
   purgeBetweenUsers: async (userA, userB) => {
